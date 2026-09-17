@@ -1,5 +1,5 @@
 <p align="center">
-<img src="./assets/charmer-logo-no-bg.png" width="60%" />
+<img src="./assets/charmer-logo-no-bg.png" width="30%" />
 </p>
 
 Provision a single self-hosted [Pangolin](https://pangolin.net) Community
