@@ -4,13 +4,11 @@
 
 Provision a single self-hosted [Pangolin](https://pangolin.net) Community
 Edition node and separate [Newt](https://docs.pangolin.net) site agents over
-SSH, in the same pattern as its sibling project,
-[akropolis](https://github.com/ktsouvalis/akropolis) (a 3-node Authentik HA
-cluster provisioner): a reviewable config file, a resumable
+SSH: a reviewable config file, a resumable
 plan/confirm/apply/verify phase pipeline, pinned-secret state, a full
 transcript of every command run, and matching `monitor`/`logs` tooling.
 
-Charmer is its own, much smaller app, not an akropolis port: one Pangolin
+Charmer is its own small app: one Pangolin
 host, no etcd/Patroni/HAProxy/keepalived (official Pangolin CE has no
 self-hosted HA at all, that's an Enterprise-only capability, see
 [Roadmap](#roadmap)), plus however many independently-addressed Newt agents
@@ -389,9 +387,7 @@ writes `config.<site>.monitor.yml` on the workstation (mode `0600`) for
 
 **The constraint:** Pangolin's whole point is publishing arbitrary internal
 resources under their own subdomains: new ones, minted whenever an admin
-adds a resource, long after `charmer provision` has finished. Unlike
-akropolis's Authentik (exactly one fixed hostname, decided once at `init`
-time), an ingress that pre-decides which certificates exist can't serve
+adds a resource, long after `charmer provision` has finished. An ingress that pre-decides which certificates exist can't serve
 domains it doesn't know about yet. So: **Traefik does all TLS/ACME itself,
 for the dashboard domain and every future resource domain, exactly as the
 official Compose does it**: `network_mode: service:gerbil`, wildcard
@@ -480,8 +476,7 @@ the public internet, never routed through Traefik. It's charmer's
 own tool for minting credentials, not a public interface, so it's
 deliberately never exposed.
 
-Pangolin CE has no way to seed an API key at deploy time the way
-Authentik's bootstrap token is env-seeded for akropolis; there is one
+Pangolin CE has no way to seed an API key at deploy time so there is one
 genuinely irreducible manual step: complete `/auth/initial-setup` in a
 browser once, then mint a **Root API Key** (Server Admin → API Keys) once.
 `charmer provision` asks for that key (hidden input) and your organization
@@ -525,9 +520,7 @@ newt` to force a re-apply.
 ## Monitoring
 
 `charmer monitor`/`charmer logs` read `config.<site>.monitor.yml` (from
-`handoff`), not the site's own config. Unlike akropolis's ak-monitor
-(which deliberately runs from a separate machine with only HTTP
-reachability into the cluster), charmer's whole footprint is small enough
+`handoff`), not the site's own config. Charmer's whole footprint is small enough
 that the same SSH access `provision` used is what monitoring uses too:
 `docker inspect` over SSH, not extra public HTTP ports (stub_status, stats
 pages) opened just for a dashboard to poll. One less thing exposed to the
@@ -583,15 +576,9 @@ from what's documented).
 
 ## Roadmap
 
-- **Run it for real** against a lab VM: the checkpoint everything above is
-  waiting on.
 - HA is explicitly out of scope for the pipeline: official Pangolin CE has
-  no self-hosted HA topology (it's an Enterprise-only capability), so
-  there is no "topology" switch here the way akropolis has `ha`/`single`:
-  charmer only ever provisions one node. If that changes upstream, or if a
-  warm-standby pattern similar to what a 3-node Pangolin HA deployment
-  would need becomes worth building by hand, it's a separate future
-  project, not an assumption baked into this pipeline.
+  no self-hosted HA topology (it's an Enterprise-only capability). If that changes upstream, or if a
+  warm-standby pattern similar to what a 3-node Pangolin HA deployment would need, becomes worth building by hand, it's a separate future project, not an assumption baked into this pipeline.
 - `charmer clean`'s Newt-side teardown removes the agent's container and
   compose bundle but does not delete its Pangolin site server-side (the
   integration API can do this; not wired up yet).
@@ -600,7 +587,7 @@ from what's documented).
 
 ## License
 
-Charmer itself is [MIT licensed](LICENSE), copyright Konstantinos Tsouvalis.
+Charmer itself is [MIT licensed](LICENSE).
 
 Charmer orchestrates, but never bundles, modifies, or redistributes, the
 following separately licensed projects:
