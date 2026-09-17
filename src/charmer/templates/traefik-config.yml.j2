@@ -1,0 +1,56 @@
+api:
+  insecure: true
+  dashboard: true
+
+providers:
+  http:
+    endpoint: "http://pangolin:3001/api/v1/traefik-config"
+    pollInterval: "5s"
+  file:
+    filename: "/etc/traefik/dynamic_config.yml"
+
+experimental:
+  plugins:
+    badger:
+      moduleName: "github.com/fosrl/badger"
+      version: "v1.4.0"
+
+log:
+  level: INFO
+  format: common
+  maxSize: 100
+  maxBackups: 3
+  maxAge: 3
+  compress: true
+
+# Wildcard address, exactly like the official layout. Traefik shares
+# Gerbil's network namespace (`network_mode: service:gerbil`), and Gerbil
+# itself host-publishes 80/443 on the wildcard address too
+# (pangolin-compose.yml.j2), so Traefik is the direct, first-hop public
+# listener: no reverse proxy in front of it, no PROXY protocol to unwrap.
+entryPoints:
+  web:
+    address: ":80"
+{% if tls_enabled %}
+  websecure:
+    address: ":443"
+{% endif %}
+
+serversTransport:
+  insecureSkipVerify: true
+
+ping:
+  entryPoint: web
+{% if cert_resolver %}
+
+certificatesResolvers:
+  {{ cert_resolver }}:
+    acme:
+      httpChallenge:
+        entryPoint: web
+      email: "{{ acme_email }}"
+{% if acme_directory_url %}
+      caServer: "{{ acme_directory_url }}"
+{% endif %}
+      storage: /letsencrypt/acme.json
+{% endif %}

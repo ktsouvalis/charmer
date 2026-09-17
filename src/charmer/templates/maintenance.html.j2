@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="charmer-maintenance" content="1">
+<title>Maintenance</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    box-sizing: border-box;
+  }
+  img.logo {
+    max-width: 240px;
+    max-height: 120px;
+    margin-bottom: 24px;
+  }
+  h1 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 0;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+{% if logo_data_uri %}
+    <img class="logo" src="{{ logo_data_uri }}" alt="logo">
+{% endif %}
+    <h1>{{ message }}</h1>
+  </div>
+</body>
+</html>

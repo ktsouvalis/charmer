@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "charmer"
+version = "0.1.0"
+description = "Provision a single self-hosted Pangolin CE node and separate Newt agents over SSH"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Konstantinos Tsouvalis" }]
+urls = { Homepage = "https://github.com/ktsouvalis/charmer", Changelog = "https://github.com/ktsouvalis/charmer/blob/main/CHANGELOG.md" }
+dependencies = [
+  "paramiko>=3.4,<4",
+  "PyYAML>=6.0,<7",
+  "Jinja2>=3.1,<4",
+  "rich>=13,<15",
+  "cryptography>=42,<47",
+  "textual>=0.60,<7",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+charmer = "charmer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+charmer = ["templates/*", "CHANGELOG.md"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

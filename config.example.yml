@@ -1,0 +1,119 @@
+site:
+  name: pangolin-uop           # used in state, prompts, transcript filenames
+  environment: lab              # lab | production (production hardens confirmation
+                                 #                    prompts, refuses tls.provider: none)
+  config_version: 1             # config-file schema version, see CHANGELOG.md
+
+provision:
+  state_file: .state/pangolin-uop.json
+  refuse_existing: true          # preflight hard-fails if the host already carries
+                                  # pangolin/gerbil/traefik/postgres containers
+
+ssh:                              # the Pangolin host's SSH
+  user: root                      # or a sudo-capable user with become: true
+  auth: agent                     # agent | key | password (password is prompted, never stored)
+  key_file: null                  # e.g. ~/.ssh/id_ed25519, only used when auth: key
+  port: 22
+  become: true                    # passwordless sudo used when available; otherwise the
+                                   # sudo password is prompted once per run, never stored
+  disable_password_auth: false    # opt-in: once you're sure key/agent auth works, set true
+                                   # to lock sshd to key-only on this host (`base` phase).
+                                   # Refused alongside auth: password (would self-lock-out).
+
+pangolin:
+  host:
+    ip: 192.0.2.10
+  tag: "1.22.0"                   # quote every tag: an unquoted 1.22 is a YAML float
+  gerbil_tag: "1.5.0"
+  traefik_tag: "v3.7.12"
+  postgres_tag: "17"
+  database: postgres              # postgres | sqlite (sqlite is lab-only)
+  postgres_user: pangolin
+  base_domain: uop.gr              # required, base domain resources are published under.
+                                    # Pangolin CE refuses to start without at least one
+                                    # domain configured; it cannot be added later from the
+                                    # dashboard before first boot
+
+# TLS is the public boundary, see README "Ingress". Traefik does all TLS/ACME
+# itself, unmodified from the official layout: this section configures
+# Traefik's certificate directly; nothing else sits in front of it.
+tls:
+  provider: self_signed            # none | self_signed | acme | import
+  hostname: pangolin.example.org   # required for self_signed/acme/import; optional
+                                    # (falls back to pangolin.host.ip) only for self_signed
+  # acme:
+  #   directory_url: https://acme-v02.api.letsencrypt.org/directory
+  #   # rehearsing? point this at your CA's staging directory instead, e.g. Let's
+  #   # Encrypt: https://acme-staging-v02.api.letsencrypt.org/directory, then switch
+  #   # back to the URL above once you're ready for the real cert
+  #   email: admin@example.org
+  # import:
+  #   fullchain: ./certs/fullchain.pem
+  #   privkey: ./certs/privkey.pem
+
+# The "we'll be back" page Traefik falls back to on the dashboard host
+# whenever pangolin is unreachable, including during `charmer shutdown`,
+# which leaves traefik running for exactly this. Dashboard only; resource
+# subdomains aren't covered, see README "Ingress". Both keys are optional.
+# maintenance:
+#   logo: ./uop_logo.png            # .png/.jpg/.jpeg/.svg, inlined into the page
+#   message: "We'll be back shortly."   # `charmer init` asks for an organization
+                                         # name and defaults this to Greek instead
+
+# Pangolin has no OIDC config.yml key: an external identity provider
+# (Authentik, Google, Azure, ...) is configured from the dashboard only:
+# Server Admin -> Identity Providers -> Add Identity Provider, after
+# provisioning. Nothing to set here.
+
+# Pangolin config.yml's `email:` section, password reset / invite emails.
+# smtp_pass is NOT set here: `charmer provision` asks for it once (hidden)
+# the first time this phase runs and pins it in local state, same treatment
+# as the Newt Root API key.
+# smtp:
+#   enabled: true
+#   host: smtp.example.org
+#   port: 587
+#   user: no-reply@example.org
+#   no_reply: no-reply@example.org
+#   secure: false                   # true = implicit TLS/SSL (usually port 465)
+#   tls_reject_unauthorized: true
+
+newt_agents:
+  # Each agent is a fully separate SSH target, never assumed to be a VM,
+  # LXC container, or physical host. If it's an unprivileged LXC without
+  # /dev/net/tun passed through, preflight tells you the hypervisor-side fix.
+  - name: patras-edge
+    ip: 192.0.2.20
+    ssh:
+      user: root
+      auth: agent
+      key_file: null
+      port: 22
+      become: true
+      disable_password_auth: false # same opt-in as the Pangolin host's ssh: block above
+    image_tag: "1.17.0"            # pinned, never "latest" (config.py refuses it)
+    tun_device: /dev/net/tun
+    docker_socket: false           # true only if this agent needs Docker-label-based routing
+
+# Newt credentials (a Pangolin "site" + its newtId/secret) are minted
+# automatically via the integration API the first time the newt phase runs
+# for each agent, see README "Newt credential automation". You'll be
+# asked once, interactively, for:
+#   - the Pangolin Root API key (Server Admin -> API Keys, after completing
+#     /auth/initial-setup, Pangolin has no way to seed this at deploy time)
+#   - your organization ID (Organization Settings -> General)
+# Both are pinned in local state (0600), never written to this file.
+
+restore:
+  postgres_dump: null              # e.g. ./backups/pangolin.sql.gz, PostgreSQL only
+  destructive: false                # must be true to allow restore to run at all
+
+# Optional. Scopes ssh on the Pangolin host AND every Newt agent to this
+# allow-list instead of leaving it open to anywhere (today's default when
+# this is omitted). Omit → asked interactively by the `base` phase (Enter to
+# skip and leave ssh open); the answer is pinned in state so `--replay`
+# never re-asks.
+# monitor:
+#   ips:
+#     - 203.0.113.5        # a single admin workstation
+#     - 10.0.0.0/24        # or a whole management subnet

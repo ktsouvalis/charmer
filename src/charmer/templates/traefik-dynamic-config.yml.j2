@@ -1,0 +1,106 @@
+http:
+  middlewares:
+    badger:
+      plugin:
+        badger:
+          disableForwardAuth: true
+{% if tls_enabled %}
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+{% endif %}
+    maintenance-errors:
+      # Dashboard-only fallback (see README "Ingress"): resource subdomains
+      # come from Pangolin's own HTTP provider, not this file, so they can't
+      # be wired to this middleware, this covers next-router/api-router/
+      # ws-router only. Fires whenever the backend (the pangolin container
+      # itself) is unreachable, whether that's `charmer shutdown` having
+      # stopped it on purpose or it just being down.
+      errors:
+        status:
+          - "502-504"
+        service: maintenance-service
+        query: "/"
+
+  routers:
+    next-router:
+      rule: "Host(`{{ dashboard_host }}`) && !PathPrefix(`/api/v1`)"
+      service: next-service
+      entryPoints:
+        - {{ "websecure" if tls_enabled else "web" }}
+      middlewares:
+        - badger
+        - maintenance-errors
+{% if tls_enabled %}
+{% if cert_resolver %}
+      tls:
+        certResolver: {{ cert_resolver }}
+{% else %}
+      tls: {}
+{% endif %}
+{% endif %}
+    api-router:
+      rule: "Host(`{{ dashboard_host }}`) && PathPrefix(`/api/v1`)"
+      service: api-service
+      entryPoints:
+        - {{ "websecure" if tls_enabled else "web" }}
+      middlewares:
+        - badger
+        - maintenance-errors
+{% if tls_enabled %}
+{% if cert_resolver %}
+      tls:
+        certResolver: {{ cert_resolver }}
+{% else %}
+      tls: {}
+{% endif %}
+{% endif %}
+    ws-router:
+      rule: "Host(`{{ dashboard_host }}`)"
+      service: api-service
+      entryPoints:
+        - {{ "websecure" if tls_enabled else "web" }}
+      middlewares:
+        - badger
+        - maintenance-errors
+{% if tls_enabled %}
+{% if cert_resolver %}
+      tls:
+        certResolver: {{ cert_resolver }}
+{% else %}
+      tls: {}
+{% endif %}
+{% endif %}
+{% if tls_enabled %}
+    dashboard-redirect:
+      rule: "Host(`{{ dashboard_host }}`)"
+      service: next-service
+      entryPoints:
+        - web
+      middlewares:
+        - redirect-to-https
+        - badger
+{% endif %}
+
+  services:
+    next-service:
+      loadBalancer:
+        servers:
+          - url: "http://pangolin:3002"
+    api-service:
+      loadBalancer:
+        servers:
+          - url: "http://pangolin:3000"
+    maintenance-service:
+      loadBalancer:
+        servers:
+          # container's own port, not the host-published debug mapping.
+          # Traefik reaches it over the compose network by name.
+          - url: "http://maintenance:80"
+{% if default_cert_file %}
+
+tls:
+  certificates:
+    - certFile: {{ default_cert_file }}
+      keyFile: {{ default_key_file }}
+{% endif %}

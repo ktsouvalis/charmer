@@ -1,0 +1,22 @@
+name: newt
+services:
+  newt:
+    image: docker.io/fosrl/newt:{{ image_tag }}
+    container_name: newt
+    restart: unless-stopped
+    environment:
+      PANGOLIN_ENDPOINT: "{{ pangolin_endpoint }}"
+      NEWT_ID: "{{ newt_id }}"
+      NEWT_SECRET: "{{ newt_secret }}"
+{% if skip_tls_verify %}
+      SKIP_TLS_VERIFY: "true"
+{% endif %}
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - "{{ tun_device }}:/dev/net/tun"
+{% if docker_socket %}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+{% endif %}

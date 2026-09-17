@@ -1,0 +1,110 @@
+name: pangolin
+services:
+  pangolin:
+    image: docker.io/fosrl/pangolin:{{ pangolin_image_tag }}
+    container_name: pangolin
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 256m
+    volumes:
+      - /opt/pangolin/config:/app/config
+    # Loopback-only publishes for charmer's OWN SSH+curl tooling
+    # (pangolin_phase.py verify(), pangolin_api.py's integration-API calls),
+    # the official layout never publishes these at all, since it has no such
+    # host-side automation. Traefik/gerbil reach pangolin over the compose
+    # network by container name instead (traefik-*-config.yml.j2), same as
+    # upstream.
+    ports:
+      - "127.0.0.1:3001:3001"
+{% if enable_integration_api %}
+      - "127.0.0.1:3003:3003"
+{% endif %}
+{% if database == "postgres" %}
+    depends_on:
+      postgres:
+        condition: service_healthy
+{% endif %}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/v1/"]
+      interval: "10s"
+      timeout: "10s"
+      retries: 15
+  gerbil:
+    image: docker.io/fosrl/gerbil:{{ gerbil_tag }}
+    container_name: gerbil
+    restart: unless-stopped
+    depends_on:
+      pangolin:
+        condition: service_healthy
+    command:
+      - --reachableAt=http://gerbil:3004
+      - --generateAndSaveKeyTo=/var/config/key
+      - --remoteConfig=http://pangolin:3001/api/v1/
+    volumes:
+      - /opt/pangolin/config:/var/config
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    # Wildcard-published exactly as the official layout does. Gerbil (and
+    # Traefik, via network_mode: service:gerbil below) owns the real public
+    # interface directly. No host-level reverse proxy in front of it.
+    ports:
+      - "51820:51820/udp"
+      - "21820:21820/udp"
+      - "80:80"
+{% if tls_enabled %}
+      - "443:443"
+{% endif %}
+  traefik:
+    image: docker.io/traefik:{{ traefik_tag }}
+    container_name: traefik
+    restart: unless-stopped
+    network_mode: service:gerbil
+    depends_on:
+      pangolin:
+        condition: service_healthy
+    command:
+      - --configFile=/etc/traefik/traefik_config.yml
+    volumes:
+      - /opt/pangolin/config/traefik:/etc/traefik:ro
+      - /opt/pangolin/config/letsencrypt:/letsencrypt
+      - /opt/pangolin/config/traefik/logs:/var/log/traefik
+  maintenance:
+    image: docker.io/library/nginx:{{ maintenance_tag }}
+    container_name: maintenance
+    restart: unless-stopped
+    # charmer's own always-on static page (see README "Ingress"), not part
+    # of the official layout: nothing external depends on its version the
+    # way Newt's does on Pangolin/Gerbil. Reachable from Traefik over the
+    # compose network as `maintenance:80`; the loopback publish below is
+    # only for manual host-side debugging (`curl 127.0.0.1:{{ maintenance_port }}`).
+    ports:
+      - "127.0.0.1:{{ maintenance_port }}:80"
+    volumes:
+      - /opt/pangolin/config/maintenance/index.html:/usr/share/nginx/html/index.html:ro
+{% if database == "postgres" %}
+  postgres:
+    image: docker.io/postgres:{{ postgres_tag }}
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "{{ postgres_user }}"
+      POSTGRES_PASSWORD: "{{ postgres_password }}"
+      POSTGRES_DB: pangolin
+    volumes:
+      - /opt/pangolin/config/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ postgres_user }}"]
+      interval: "10s"
+      timeout: "5s"
+      retries: 5
+{% endif %}
+
+networks:
+  default:
+    driver: bridge
+    name: pangolin

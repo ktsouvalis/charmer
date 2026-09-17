@@ -1,0 +1,61 @@
+app:
+  dashboard_url: "{{ base_url }}"
+  log_level: info
+
+domains:
+  domain1:
+    base_domain: "{{ base_domain }}"
+
+server:
+  # No external_port/internal_port/next_port here, matching the official
+  # layout exactly (docs.pangolin.net's example omits them too). Pangolin's
+  # own apiServer.ts *always* starts an extra "Dashboard API server" bound
+  # to server.external_port with no host argument (so it grabs the wildcard
+  # address, not loopback). Setting external_port: 443 here previously
+  # made Pangolin itself squat on the public port, straight past Traefik and
+  # unreachable by it. Left unset, Pangolin falls back to its own default
+  # (3000), which is exactly what
+  # traefik-dynamic-config.yml.j2's api-service already targets.
+  secret: "{{ server_secret }}"
+{% if enable_integration_api %}
+  integration_port: 3003
+{% endif %}
+  cors:
+    origins:
+      - "{{ base_url }}"
+
+flags:
+  require_email_verification: false
+  disable_signup_without_invite: true
+  disable_user_create_org: false
+  allow_raw_resources: true
+{% if enable_integration_api %}
+  enable_integration_api: true
+{% endif %}
+
+# WireGuard kernel interface (wg0) listen port, this is what Newt sends its
+# handshake to. Do NOT set this to 21820: that is Gerbil's separate hole-
+# punch/relay port. Setting start_port to 21820 sends every handshake to the
+# relay server instead of the kernel interface: every site shows
+# Disconnected with RELAY=true, and Gerbil logs "No proxy mapping found" for
+# every packet. This has bitten this exact deployment before; it is
+# hardcoded here on purpose, not left as a config knob.
+gerbil:
+  start_port: 51820
+  base_endpoint: "{{ dashboard_host }}"
+{% if database == "postgres" %}
+
+postgres:
+  connection_string: "{{ postgres_connection_string }}"
+{% endif %}
+{% if smtp_enabled %}
+
+email:
+  smtp_host: "{{ smtp_host }}"
+  smtp_port: {{ smtp_port }}
+  smtp_user: "{{ smtp_user }}"
+  smtp_pass: "{{ smtp_pass }}"
+  smtp_secure: {{ smtp_secure | lower }}
+  no_reply: "{{ smtp_no_reply }}"
+  smtp_tls_reject_unauthorized: {{ smtp_tls_reject_unauthorized | lower }}
+{% endif %}
