@@ -37,16 +37,16 @@ doesn't bundle, modify, or redistribute any of them.
 
 | Phase | Status |
 |---|---|
-| preflight | read-only, implemented |
-| base | implemented |
-| pangolin | implemented, official Compose layout, all four TLS providers |
-| restore | implemented, optional, PostgreSQL `.sql.gz` only |
-| newt | implemented, credentials minted automatically via the Pangolin API; skipped when restore just ran |
-| handoff | implemented, read-only, emits the monitor config |
+| preflight | read-only, implemented, verified |
+| base | implemented, verified |
+| pangolin | implemented, verified, official Compose layout, exercised with `acme` (staging, then real Let's Encrypt production) |
+| restore | implemented, verified, both the skipped path (no dump configured) and a real destructive restore |
+| newt | implemented, verified, credentials minted automatically via the Pangolin API; agent provisioned, connected, and a private resource published through it and reached from outside |
+| handoff | implemented, verified, read-only, emits the monitor config |
 
 `shutdown` / `start` / `clean` lifecycle commands and `charmer monitor` /
-`charmer logs` are implemented. None of this has been run against real
-infrastructure yet, see [Verification status](#verification-status).
+`charmer logs` are implemented and have all been run end-to-end against a
+real lab deployment, see [Verification status](#verification-status).
 
 ## Install
 
@@ -567,12 +567,20 @@ re-render can never rotate a password out from under a running stack.
 Every phase has been exercised against config validation, template
 rendering (every TLS/database combination: `pytest`), and the CLI's
 connection/error-handling paths (a real SSH timeout against a placeholder
-IP, config errors, unknown `--only`/`--replay` names). None of the
-write-phases (`base`/`pangolin`/`newt`/`restore`) have been run against a
-real Ubuntu host yet: that's the actual proof still owed, and
-the point where a first real run will surface whatever this pass guessed
-wrong (file permissions, a service's actual UID, an API path that drifted
-from what's documented).
+IP, config errors, unknown `--only`/`--replay` names).
+
+Beyond that, the full pipeline has been run end-to-end against a real lab
+deployment: `preflight` through `handoff` on a real Ubuntu host plus a real
+Newt agent, `restore` exercised both without a dump configured (the skip
+path) and with a real destructive restore, `tls.provider: acme` exercised
+first against Let's Encrypt's staging directory and then against the real
+production directory, the maintenance page checked both without and with a
+custom `maintenance.logo`, the Newt agent provisioned and connected with a
+private resource published through it and reached from outside, and
+`shutdown`/`start`/`clean`/`monitor`/`logs` all run against that same live
+site. Not yet exercised for real: multiple Newt agents in the same run,
+`tls.provider: self_signed`/`import`, SQLite, and the `ssh.disable_password_auth`/
+`monitor.ips` opt-ins.
 
 ## Roadmap
 

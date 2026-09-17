@@ -2,6 +2,16 @@
 
 ## [0.1.0] - 2026-09-17
 
+- **First full pipeline run against a real lab deployment.** `preflight`
+  through `handoff` on a real Ubuntu host plus a real Newt agent, `restore`
+  exercised both without a dump configured and with a real destructive
+  restore, `tls.provider: acme` exercised against Let's Encrypt staging and
+  then production, the maintenance page checked without and with a custom
+  logo, the Newt agent provisioned/connected with a private resource
+  published and reached from outside, and `shutdown`/`start`/`clean`/
+  `monitor`/`logs` all run against that same site. See README "Verification
+  status" for what's still unexercised.
+
 - **`restore` now reconciles Gerbil's exit-node identity after loading a
   dump from a different Pangolin deployment.** A dump's `exitNodes` row
   overwrites this host's `publicKey`/`reachableAt` with the source
