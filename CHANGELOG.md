@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.5.0] - 2026-09-22
+
+- **`pangolin` now offers to reuse an existing `server.secret` instead of
+  always generating a new one.** The first time the phase runs for a site,
+  it asks (hidden input, before `config.yml` is first rendered): Enter
+  generates a random secret as before; pasting an existing value instead
+  pins that one. Meant for migrating a dump from a *different* Pangolin
+  deployment onto a fresh charmer-provisioned site — that data was
+  encrypted/signed under the old secret, so this site needs to match it
+  from the first boot, not have it patched in after the fact. Replaces the
+  0.3.0 README workaround of hand-editing `.state/<site>.json`'s
+  `generated.pangolin_server_secret` directly; that file should no longer
+  need manual edits for this. Like every pinned value, it's asked **once
+  ever** — get it right before `pangolin`'s first apply, since a later
+  `--replay pangolin` reuses whatever's already pinned. See README
+  "restore".
+
+## [0.4.0] - 2026-09-22
+
+- **New optional `pangolin.host.hostname` — sets the Pangolin host's OS
+  hostname.** Same resolution shape as `monitor.ips`: config value first,
+  else `base` asks interactively the first time it runs against a site
+  (Enter to leave the current hostname alone), pinned in state so `--replay
+  base` never re-asks or drifts from what the file says. Runs `hostnamectl
+  set-hostname` and syncs `/etc/hosts`'s `127.0.1.1` line to match, avoiding
+  the classic `sudo: unable to resolve host <old-name>` cosmetic warning
+  that `hostnamectl` alone leaves behind. Safe to use against an
+  already-running site: nothing charmer renders or Pangolin itself needs is
+  keyed off the OS hostname (see README "base"). Purely additive and
+  optional, like `monitor.ips` before it, so no `config_version` bump.
+  `charmer status` also surfaces the resolved hostname when one is set.
+
+## [0.3.0] - 2026-09-22
+
+- **New `charmer status CONFIG` command.** Reads the config file plus its
+  `.state/<site>.json` and prints per-phase status/timestamps, which secrets
+  are pinned (names only, values never shown), per-agent Newt credential-
+  minting status, and the `restore`/`tls` summary — purely local, no SSH
+  connection opened. Answers "where did the last run stop" without
+  `--only preflight` or waiting on `monitor` to connect. See README
+  "The phase model".
+
+- **README: documented two operational gotchas from a real production
+  migration** (the same one behind 0.2.0's Newt-redial fix): restoring a
+  dump from a *different* Pangolin deployment needs that old deployment's
+  `server.secret` pre-seeded into `.state/<site>.json`'s
+  `generated.pangolin_server_secret` before the `pangolin` phase first
+  runs, otherwise data encrypted/signed under the old secret (sessions,
+  2FA, stored resource passwords) is unreadable once restored under a
+  freshly-generated one; and Newt agents outside this run's `newt_agents`
+  list (never charmer-provisioned, or trimmed from a later config) need a
+  manual `docker compose down` + `up -d` after a restore recreates gerbil,
+  not just `restart`. See README "restore".
+
 ## [0.2.0] - 2026-09-22
 
 - **`restore` now redials already-provisioned Newt agents after loading a

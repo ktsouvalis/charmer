@@ -7,6 +7,7 @@ Newt agents over SSH.
     charmer shutdown config.yml        stop pangolin (gerbil + traefik + maintenance page stay up)
     charmer start config.yml           start them again (refuses without a prior shutdown)
     charmer clean config.yml           tear the site down to a bare host
+    charmer status config.yml          phase progress + pinned state, local only (no SSH)
     charmer monitor config.<site>.monitor.yml   real-time health dashboard
     charmer logs config.<site>.monitor.yml      cluster-wide log viewer (SSH), --save to download
     charmer update                     install the latest release (zipapp binary only)
@@ -230,6 +231,65 @@ def cmd_clean(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+_PHASE_STYLE = {"done": "green", "failed": "red", "declined": "red", "skipped": "yellow", "pending": "dim"}
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Local-only: no SSH, no fleet, just config + the state file on disk.
+    Answers "where is this site in the pipeline" without touching the network."""
+    cfg = _load_or_die(args.config)
+    state = State(cfg.state_file, cfg.name)
+    generated = state.data.get("generated", {})
+
+    console.print(f"[bold]{cfg.name}[/bold] ({cfg.environment}) - {cfg.dashboard_host} @ {cfg.host_ip}")
+    hostname = cfg.host_hostname or generated.get("host_hostname", "")
+    if hostname:
+        console.print(f"[dim]OS hostname: {hostname}[/dim]")
+    exists = cfg.state_file.exists()
+    console.print(f"[dim]state file: {cfg.state_file}{'' if exists else ' (not created yet, nothing applied)'}[/dim]")
+
+    console.print("\n[bold]phases:[/bold]")
+    for phase in PIPELINE:
+        entry = state.data["phases"].get(phase.name, {})
+        status = entry.get("status", "pending")
+        style = _PHASE_STYLE.get(status, "white")
+        when = f"  [dim]{entry['updated_at']}[/dim]" if entry.get("updated_at") else ""
+        console.print(f"  [{style}]{status:<9}[/{style}] {phase.name}{when}")
+        if status == "failed" and entry.get("error"):
+            console.print(f"      [red]{entry['error']}[/red]")
+
+    pinned = [
+        ("pangolin server secret", "pangolin_server_secret"),
+        ("postgres password", "pangolin_postgres_password"),
+        ("smtp password", "pangolin_smtp_pass"),
+        ("root API key", "pangolin_root_api_key"),
+        ("org ID", "pangolin_org_id"),
+    ]
+    have = [label for label, key in pinned if key in generated]
+    if have:
+        console.print(f"\n[bold]pinned in state[/bold] (values not shown): {', '.join(have)}")
+
+    if cfg.newt_agents:
+        console.print(f"\n[bold]newt agents[/bold] ({len(cfg.newt_agents)} configured):")
+        for agent in cfg.newt_agents:
+            minted = f"newt_id_{agent.name}" in generated
+            mark = "[green]credentials minted[/green]" if minted else "[dim]not minted yet[/dim]"
+            console.print(f"  {agent.name} ({agent.ip}) - {mark}")
+
+    if cfg.restore_dump:
+        flag = "" if cfg.restore_destructive else " [red](restore.destructive not set, apply would be refused)[/red]"
+        console.print(f"\n[bold]restore.postgres_dump:[/bold] {cfg.restore_dump}{flag}")
+        last = generated.get("restore_at")
+        if last:
+            console.print(f"  [dim]last loaded: {last} (sha256 {generated.get('restore_sha256', '?')[:12]}...)[/dim]")
+
+    cert_expiry = generated.get("tls_cert_expiry")
+    console.print(f"\n[bold]tls:[/bold] provider={cfg.tls.provider}" +
+                 (f", cert expiry {cert_expiry}" if cert_expiry else ""))
+
+    return 0
+
+
 def cmd_monitor(args: argparse.Namespace) -> int:
     from .monitor.dashboard import run as monitor_run
     monitor_run(args.config, once=args.once, interval=args.interval)
@@ -302,6 +362,10 @@ def main(argv: list[str] | None = None) -> int:
     p_clean.add_argument("--i-know-this-is-production", action="store_true",
                          help="required additionally when site.environment is production")
     p_clean.set_defaults(func=cmd_clean)
+
+    p_status = sub.add_parser("status", help="show phase progress + pinned state for a config file (local only, no SSH)")
+    p_status.add_argument("config")
+    p_status.set_defaults(func=cmd_status)
 
     p_mon = sub.add_parser("monitor", help="real-time health dashboard")
     p_mon.add_argument("config", help="config.<site>.monitor.yml (emitted by provision's handoff phase)")

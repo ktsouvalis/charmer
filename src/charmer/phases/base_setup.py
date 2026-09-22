@@ -50,15 +50,31 @@ case handled automatically is the open-vs-scoped transition: switching from
 no monitor.ips to a populated one first deletes the old wide-open ssh rule,
 otherwise it would keep allowing ssh from anywhere alongside the new
 per-IP rules.
+
+**OS hostname, Pangolin host only, optional `pangolin.host.hostname`:**
+same resolution shape as `monitor_ips`: config value first, else an
+interactive prompt (Enter to leave the host's hostname untouched), whose
+answer (including a blank "skip") is pinned in state so `--replay base`
+never re-asks or drifts from what the file says. Nothing charmer renders
+(Pangolin's `config.yml`, the Traefik/Gerbil/Postgres Compose stack, or
+charmer's own SSH targeting, which is always by `pangolin.host.ip`) is
+keyed off the OS-level hostname, so setting/changing it is safe against an
+already-running stack; see README "base" for the detail on why and the one
+cosmetic gotcha (`/etc/hosts`) this phase also fixes so `sudo` never warns
+about it.
 """
 
 from __future__ import annotations
 
 import ipaddress
+import re
+import shlex
 
 from ..remote import push_file
 from ..sshexec import NodeConn
 from .base import Phase, PhaseContext
+
+_HOSTNAME_LABEL_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
 
 BASE_PACKAGES = ("curl wget gnupg2 ca-certificates lsb-release "
                  "apt-transport-https ufw jq unzip")
@@ -97,6 +113,10 @@ def _valid_ip_or_cidr(v: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _valid_hostname(v: str) -> bool:
+    return bool(v) and len(v) <= 253 and all(_HOSTNAME_LABEL_RE.match(label) for label in v.split("."))
 
 
 def _client_ip(conn: NodeConn) -> str | None:
@@ -149,10 +169,36 @@ class BasePhase(Phase):
         pinned = ctx.state.get_or_generate("monitor_ips", ask)
         return [ip for ip in pinned.split(",") if ip]
 
+    # ------------------------------------------------------------- hostname
+    def _hostname_pinned(self, ctx: PhaseContext) -> str:
+        """Resolved value without prompting, for plan(), which must never
+        block on input. Same shape as _monitor_ips_pinned()."""
+        if ctx.cfg.host_hostname:
+            return ctx.cfg.host_hostname
+        return ctx.state.data["generated"].get("host_hostname", "")
+
+    def _hostname(self, ctx: PhaseContext) -> str:
+        if ctx.cfg.host_hostname:
+            return ctx.cfg.host_hostname
+
+        def ask() -> str:
+            v = input(f"Set the OS hostname for the Pangolin host ({ctx.host.name}, "
+                      "e.g. pangolin-prod01; Enter to leave it unchanged): ").strip()
+            while v:
+                if _valid_hostname(v):
+                    return v
+                v = input("  invalid hostname (letters/digits/hyphens per label, no leading/"
+                          "trailing hyphen), try again (Enter to leave unchanged): ").strip()
+            return ""
+
+        return ctx.state.get_or_generate("host_hostname", ask)
+
     def plan(self, ctx: PhaseContext) -> list[str]:
         names = ", ".join(c.name for c in ctx.fleet)
         mon_ips = self._monitor_ips_pinned(ctx)
         already_asked = bool(ctx.cfg.monitor_ips) or "monitor_ips" in ctx.state.data["generated"]
+        hostname = self._hostname_pinned(ctx)
+        hostname_asked = bool(ctx.cfg.host_hostname) or "host_hostname" in ctx.state.data["generated"]
         if mon_ips:
             ssh_desc = (f"allow ssh only from {', '.join(mon_ips)}, plus whatever IP each host's own "
                         "connection is coming from right now (auto-detected, so charmer never locks "
@@ -162,9 +208,17 @@ class BasePhase(Phase):
         else:
             ssh_desc = ("allow ssh (you will be asked whether to scope it to specific "
                        "IPs; Enter to skip, the answer is pinned in state)")
+        if hostname:
+            hostname_line = f"set the Pangolin host's OS hostname to {hostname!r} (hostnamectl + /etc/hosts), if not already set"
+        elif hostname_asked:
+            hostname_line = "Pangolin host's OS hostname left unchanged (previously skipped)"
+        else:
+            hostname_line = ("you will be asked whether to set the Pangolin host's OS hostname; "
+                             "Enter to skip, the answer is pinned in state")
         lines = [
             f"apt update + install baseline packages on {names}",
             "Pangolin host also gets chrony",
+            hostname_line,
             "install Docker CE from download.docker.com on every host (no-op if present)",
             "write /etc/docker/daemon.json with real DNS resolvers if none exists yet, restarting docker: "
             "avoids a Docker + systemd-resolved interaction where containers get the host's unreachable "
@@ -183,6 +237,7 @@ class BasePhase(Phase):
 
     def apply(self, ctx: PhaseContext) -> None:
         mon_ips = self._monitor_ips(ctx)  # may prompt, before any node is touched
+        hostname = self._hostname(ctx)  # may prompt, before any node is touched
 
         for conn in ctx.fleet:
             is_host = conn is ctx.host
@@ -215,6 +270,24 @@ class BasePhase(Phase):
             ctx.record(node, "baseline packages", r.ok, r.err.splitlines()[-1] if (not r.ok and r.err) else "")
             if is_host:
                 conn.run("systemctl enable --now chrony")
+
+            if is_host and hostname:
+                current = conn.run("hostname").out.strip()
+                if current == hostname:
+                    ctx.record(node, "OS hostname", True, f"already {hostname}")
+                else:
+                    ctx.begin(node, "setting OS hostname", f"{current} -> {hostname}")
+                    r = conn.run(f"hostnamectl set-hostname {shlex.quote(hostname)}", sudo=True)
+                    if r.ok:
+                        # hostnamectl only rewrites /etc/hostname; a stale 127.0.1.1
+                        # line in /etc/hosts left pointing at the old name is what
+                        # makes sudo print "unable to resolve host <old-name>" on
+                        # every future invocation (cosmetic, not a functional
+                        # break, but cheap to avoid outright).
+                        conn.run(
+                            f"sed -i 's/^127\\.0\\.1\\.1.*/127.0.1.1\\t{hostname}/' /etc/hosts",
+                            sudo=True)
+                    ctx.record(node, "OS hostname set", r.ok, f"{current} -> {hostname}" if r.ok else r.err)
 
             if conn.run("command -v docker && docker compose version").ok:
                 ctx.record(node, "docker", True, "already installed")
@@ -275,6 +348,7 @@ class BasePhase(Phase):
     def verify(self, ctx: PhaseContext) -> bool:
         ok = True
         mon_ips = self._monitor_ips_pinned(ctx)
+        hostname = self._hostname_pinned(ctx)
         for conn in ctx.fleet:
             node = conn.name
             checks = [
@@ -283,6 +357,8 @@ class BasePhase(Phase):
             ]
             for ip in mon_ips:
                 checks.append((f"ssh allow-list includes {ip}", f"ufw status | grep -qF '{ip}'"))
+            if conn is ctx.host and hostname:
+                checks.append(("OS hostname matches", f"[ \"$(hostname)\" = {shlex.quote(hostname)} ]"))
             if conn.cfg.disable_password_auth:
                 checks.append(("ssh password auth disabled", "sshd -T | grep -qi '^passwordauthentication no'"))
             for label, cmd in checks:

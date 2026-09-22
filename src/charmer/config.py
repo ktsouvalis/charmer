@@ -11,11 +11,18 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+_HOSTNAME_LABEL_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
+
+
+def _valid_hostname(v: str) -> bool:
+    return bool(v) and len(v) <= 253 and all(_HOSTNAME_LABEL_RE.match(label) for label in v.split("."))
 
 VALID_ENVIRONMENTS = {"lab", "production"}
 VALID_TLS_PROVIDERS = {"none", "self_signed", "acme", "import"}
@@ -130,6 +137,7 @@ class SiteConfig:
     state_file: Path
     refuse_existing: bool
     host_ip: str
+    host_hostname: str
     ssh: SSHTarget
     pangolin: PangolinConfig
     tls: TLSConfig
@@ -247,6 +255,16 @@ def load(path: str | Path) -> SiteConfig:
         ipaddress.ip_address(host_ip)
     except ValueError:
         problems.append(f"pangolin.host.ip: invalid or placeholder IP: {host_ip!r}")
+
+    # Optional: the OS-level hostname `base` sets on the Pangolin host
+    # (hostnamectl + /etc/hosts), unrelated to tls.hostname/dashboard_host
+    # (the DNS name Traefik's cert and Pangolin's base_url use) or host_ip
+    # (what charmer connects to). Omit to leave the host's current hostname
+    # untouched; `base` then falls back to an interactive prompt instead
+    # (Enter to skip), same shape as monitor.ips. See README "base".
+    host_hostname = str(_get(raw, "pangolin.host.hostname", "") or "").strip()
+    if host_hostname and not _valid_hostname(host_hostname):
+        problems.append(f"pangolin.host.hostname: invalid hostname: {host_hostname!r}")
 
     database = _get(raw, "pangolin.database", "postgres")
     if database not in VALID_DATABASES:
@@ -407,6 +425,7 @@ def load(path: str | Path) -> SiteConfig:
         state_file=state_file,
         refuse_existing=bool(_get(raw, "provision.refuse_existing", True)),
         host_ip=host_ip,
+        host_hostname=host_hostname,
         ssh=ssh,
         pangolin=pangolin,
         tls=tls,

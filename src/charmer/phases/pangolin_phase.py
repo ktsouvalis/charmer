@@ -76,9 +76,30 @@ class PangolinPhase(Phase):
     def _image_tag(self, cfg) -> str:
         return f"postgresql-{cfg.pangolin.tag}" if cfg.pangolin.database == "postgres" else cfg.pangolin.tag
 
+    def _ask_server_secret(self, ctx: PhaseContext) -> str:
+        """Asked once, ever, the first time `pangolin` runs for this site
+        (see _secrets()): Pangolin's server.secret is what encrypts/signs
+        everything of its own that ends up in Postgres (sessions, 2FA,
+        stored resource passwords). A fresh install has no reason to care
+        what it is: Enter generates a random one, same as before this
+        prompt existed. It only matters when restoring a dump produced by a
+        *different* Pangolin deployment (README "restore"): that data was
+        encrypted under the OLD deployment's secret, so this fresh site
+        needs to be pinned to the SAME value before `pangolin` first
+        renders config.yml, not patched in afterward by hand-editing the
+        state file.
+        """
+        v = getpass.getpass(
+            "Pangolin server.secret (hidden, pinned in state, never written to the config "
+            "file). Leave blank to generate a new one (fresh install). Paste an EXISTING "
+            "value only if you're about to restore a dump from a DIFFERENT Pangolin "
+            "deployment onto this site: that dump's encrypted data (sessions/2FA/resource "
+            "passwords) only decrypts under the secret it was written with: ")
+        return v or gen_password()
+
     def _secrets(self, ctx: PhaseContext) -> dict[str, str]:
         g = ctx.state.get_or_generate
-        secrets = {"server_secret": g("pangolin_server_secret", gen_password)}
+        secrets = {"server_secret": g("pangolin_server_secret", lambda: self._ask_server_secret(ctx))}
         if ctx.cfg.pangolin.database == "postgres":
             secrets["postgres_password"] = g("pangolin_postgres_password", gen_password)
         if ctx.cfg.smtp.enabled:
@@ -120,12 +141,17 @@ class PangolinPhase(Phase):
     # ------------------------------------------------------------------ plan
     def plan(self, ctx: PhaseContext) -> list[str]:
         cfg = ctx.cfg
+        secret_note = ("" if "pangolin_server_secret" in ctx.state.data["generated"]
+                      else ", you will be asked once (hidden input; Enter generates a new one, "
+                           "or paste an existing server.secret when restoring a dump from a "
+                           "different Pangolin deployment)")
         lines = [
             f"render + push the official Compose ({self._image_tag(cfg)}, bridge networking + "
             f"traefik as network_mode: service:gerbil) and config.yml on {ctx.host.name}",
-            "server secret / Postgres password: generated once, pinned in state, never printed",
+            f"server secret: generated once (or provided by you), pinned in state, never printed{secret_note}",
         ]
         if cfg.pangolin.database == "postgres":
+            lines.append("Postgres password: generated once, pinned in state, never printed")
             lines.append("Postgres runs as a plain container on the compose bridge network, "
                          "never published to the host, reachable only from pangolin as `postgres:5432`")
         else:

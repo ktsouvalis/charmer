@@ -118,6 +118,9 @@ charmer clean CONFIG                tear the site down to a bare host (typed-nam
                                        confirmation, every environment)
   --i-know-this-is-production          required additionally in production
 
+charmer status CONFIG               phase progress + pinned state for a config file,
+                                       local only (reads config + state file, no SSH)
+
 charmer monitor CONFIG.monitor.yml  real-time health dashboard
 charmer logs CONFIG.monitor.yml     cluster-wide log viewer (SSH)
   --last HOURS / --level LEVEL / --save FILE
@@ -151,6 +154,13 @@ phases and resumes at the frontier. `--replay PHASE` marks exactly the
 named phase(s) pending; `--only PHASE` runs just the named phase(s)
 regardless of prior status (useful for `--only preflight` on a live site,
 or re-running `newt` after adding an agent).
+
+`charmer status CONFIG` reads that state file (plus the config) and prints
+each phase's status/timestamp, which secrets are pinned (names only, never
+values), per-agent Newt credential-minting status, and the `restore`/`tls`
+summary, without opening any SSH connection. Useful for "where did the last
+run stop" without re-running `--only preflight` or waiting on `monitor` to
+connect.
 
 ## Phases
 
@@ -230,6 +240,29 @@ apply that scopes ssh down (UFW doesn't tear down established connections),
 so the run itself finishes looking clean, but the next connection attempt,
 even charmer's own on a later `--only`/`--replay`, would otherwise time out
 with no indication why.
+
+**OS hostname, Pangolin host only, optional `pangolin.host.hostname`:**
+same resolution shape as `monitor.ips` — config value first; if unset, an
+interactive prompt the first time `base` runs against a site (Enter to
+leave the host's current hostname alone), pinned in state so `--replay
+base` never re-asks or drifts from what the file says. Runs `hostnamectl
+set-hostname` and, if that succeeds, also rewrites `/etc/hosts`'s `127.0.1.1`
+line to match (skipped otherwise): `hostnamectl` alone only updates
+`/etc/hostname`, and a stale `127.0.1.1 <old-name>` line left behind is
+exactly what makes `sudo` print `unable to resolve host <old-name>` on
+every subsequent command — cosmetic, not a functional break, but cheap to
+avoid outright.
+
+Changing the OS hostname on an **already-running** site is safe: nothing
+charmer renders or Pangolin itself needs is keyed off it. Pangolin's
+`config.yml` (`base_url`/`dashboard_host`) and the self-signed/imported
+cert's CN/SAN come from `tls.hostname`/`host_ip`, a DNS name or IP charmer
+tracks separately; Gerbil/Traefik/Postgres talk to each other over Docker
+Compose's own service-name DNS (`pangolin`, `gerbil`, `postgres`), which
+has nothing to do with the host's `hostname(1)`; and charmer's own SSH
+targeting is always `pangolin.host.ip`, never the hostname. The only actual
+side effect anywhere in this stack is the `/etc/hosts` cosmetic warning
+above, which this phase avoids by fixing it in the same step.
 
 ### pangolin
 
@@ -339,6 +372,24 @@ afterward, keyed on the primary key, not `publicKey`, which is exactly
 what Pangolin's own logic can't do. Everything else on that row (address,
 name) comes from the dump untouched. See `phases/restore_phase.py`.
 
+**Migrating an existing (non-charmer) Pangolin deployment onto a fresh
+charmer-provisioned host:** `server.secret` is what Pangolin uses to
+encrypt/sign data that ends up in Postgres (sessions, 2FA, stored resource
+passwords, ...). If the dump you're about to load was produced by a
+*different* installation, restoring it onto a site whose own
+`server.secret` doesn't match leaves that data undecryptable. The first
+time the `pangolin` phase runs for a site, it asks (hidden input, before
+rendering `config.yml`): Enter generates a new random secret, same as
+before this prompt existed, for a normal fresh install; pasting the **old**
+deployment's `server.secret` here instead pins that value in state
+(`generated.pangolin_server_secret`) and Pangolin is rendered to use it
+from the very first boot. Like every other pinned value, it's asked
+**once ever** — get this one right before the `pangolin` phase's first
+apply, since a later `--replay pangolin` reuses whatever got pinned, not a
+second chance to answer differently. (The one thing not automated: getting
+the old secret off the source deployment in the first place — read it out
+of that install's own `config.yml`/`SERVER_SECRET` env var.)
+
 Recreating gerbil above restarts its WireGuard process, which drops any
 Newt agent that was already tunneled in. Since `newt` (below) skips itself
 whenever a restore just ran, nothing else in the pipeline would otherwise
@@ -357,7 +408,14 @@ lookup and prompts for nothing. With `newt_agents` empty (Newt managed
 entirely outside charmer, a legitimate and common choice), this step is a
 no-op: charmer has no visibility into those hosts and won't try to gain
 any. Redialing them after a restore is then a manual step on whatever
-system manages them, same as before this feature existed.
+system manages them, same as before this feature existed: on each such
+agent, `docker compose down` then `docker compose up -d` (not just
+`restart`) is the more reliable form — the same connection-recreation
+gerbil itself just went through, which a plain `restart` doesn't always
+reproduce for Newt's own reconnect logic. This applies to *any* Newt agent
+outside this run's `newt_agents` list, whether or not charmer provisioned
+it originally: e.g. an agent from a config that has since been trimmed, or
+one that was always managed by hand.
 
 `charmer provision config.yml --only restore` scopes a run to just this
 phase regardless of `newt_agents`: `pangolin_phase` doesn't run, so
