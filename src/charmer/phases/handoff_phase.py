@@ -32,6 +32,8 @@ class HandoffPhase(Phase):
             "dashboard_url": cfg.base_url,
             "pangolin": {
                 "ip": cfg.host_ip,
+                "database": cfg.pangolin.database,
+                "postgres_user": cfg.pangolin.postgres_user,
                 "ssh": {"user": cfg.ssh.user, "auth": cfg.ssh.auth,
                         "key_file": cfg.ssh.key_file, "port": cfg.ssh.port, "become": cfg.ssh.become},
             },

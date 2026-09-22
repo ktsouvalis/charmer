@@ -631,6 +631,26 @@ logs` pulls `docker logs` from every container on every host in parallel,
 `--level`-filtered the same way `journalctl -p` filters, `--save` to write
 a plain-text report instead of printing.
 
+`charmer logs` also always writes `<site>_access.csv` (or
+`<save-file>_access.csv` with `--save`): resolved user<->resource
+connection history, one row per session (Agent, Agent IP, Started, Ended,
+Duration, Who, Where, Proto, Destination). Source: each Newt agent's own
+`ACCESS START`/`END` log lines (fetched unfiltered, bypassing `--level`,
+since Newt logs these at INFO and Pangolin CE has no server-side handler
+for the `newt/access-log` message that would otherwise centralize them —
+see fosrl/pangolin#3695 — so per-agent SSH is the only way to reach this
+data at all), cross-referenced against Pangolin's Postgres (`resources`,
+`clients`, `user`) via `docker exec postgres psql` on the host — a local
+Unix-socket connection (`initdb`'s default `local ... trust`, never
+touched by the Docker entrypoint's TCP-only auth setup), so no Postgres
+password is ever needed or stored for this. Only Newt agents listed in
+that site's `newt_agents:` are reachable this way; since `monitor.yml` is
+plain, standalone YAML (not tied to provisioning state), hand-add an entry
+there to cover a Newt agent this site didn't provision itself (e.g. one
+introduced by restoring a dump from elsewhere). SQLite deployments (lab-
+only, see "Rules") get the plain per-agent log dump but no resolved CSV
+rows: no Postgres to query.
+
 ## State file & secrets
 
 One JSON state file per site (default `.state/<site>.json`, mode `0600`):

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.0] - 2026-09-22
+
+- **`charmer logs` now resolves user<->resource connection history**,
+  writing `<site>_access.csv` (or `<save-file>_access.csv` with `--save`)
+  alongside the existing text report: one row per session (Agent, Agent
+  IP, Started, Ended, Duration, Who, Where, Proto, Destination). Source is
+  each Newt agent's own `ACCESS START`/`END` log lines, fetched unfiltered
+  (bypassing `--level`, since Newt logs these at INFO and Pangolin CE has
+  no server-side handler for the `newt/access-log` message that would
+  otherwise centralize them — see fosrl/pangolin#3695), cross-referenced
+  against Pangolin's Postgres (`resources`, `clients`, `user`) via `docker
+  exec postgres psql` on the host: a local Unix-socket connection, so no
+  Postgres password is needed or stored for this (`initdb`'s default
+  `local ... trust`, never touched by the Docker entrypoint's TCP-only
+  auth setup). `handoff` now also writes `pangolin.database`/
+  `pangolin.postgres_user` into `config.<site>.monitor.yml` so `logs`
+  knows how to run the query; SQLite deployments (lab-only) get the plain
+  per-agent dump but no resolved CSV rows. Only Newt agents already listed
+  in that site's `newt_agents:` are reachable this way — `monitor.yml` is
+  plain, standalone YAML, so hand-add an entry there to cover an agent
+  this site didn't provision itself. No config.yml keys changed, no
+  `config_version` bump. See README "Monitoring".
+
 ## [0.6.0] - 2026-09-22
 
 - **New optional `base.unattended_upgrades` — mask the OS's own
