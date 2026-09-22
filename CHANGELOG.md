@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.0] - 2026-09-22
+
+- **`restore` now redials already-provisioned Newt agents after loading a
+  dump.** Recreating gerbil/traefik (below) restarts gerbil's WireGuard
+  process; a Newt agent that was already tunneled in before the run goes
+  stale and previously stayed that way until an operator manually ran
+  `docker compose restart` on it, since `newt` itself is skipped whenever a
+  restore just ran (its own credentials-aren't-re-minted guard). `restore`
+  now does a lightweight `docker compose restart newt` on each configured
+  agent that already has a bundle at `/opt/newt` — no credentials touched,
+  no DB lookup, since a Newt container's compose file already carries the
+  right `newtId`/secret from whenever it was first provisioned. An agent
+  with no bundle yet is skipped (this is the no-op path whenever
+  `newt_agents` is empty, e.g. Newt managed entirely outside charmer); a
+  restart that doesn't come back is a warning, not a phase failure. Surfaced
+  by a real-world production migration report: an existing, non-charmer
+  Pangolin deployment restored into a fresh charmer-provisioned stack via
+  `restore.postgres_dump`, whose already-running Newt agents went dark
+  after the pipeline recreated gerbil, with nothing left to tell them to
+  redial. See README "restore".
+
 ## [0.1.0] - 2026-09-17
 
 - **First full pipeline run against a real lab deployment.** `preflight`

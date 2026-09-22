@@ -4,6 +4,17 @@ stops before anything touches the database, the dump is checksum-verified
 after upload and deleted from the host immediately after loading (it holds
 every secret Pangolin has), and a failed load leaves the stack stopped
 rather than half-up on half-data.
+
+Recreating gerbil (below) restarts its WireGuard process; any Newt agent
+that was already tunneled in before this run goes stale and needs to
+redial. This phase restarts each configured agent's *existing* `newt`
+container for that reason alone (no fresh credentials minted, no DB
+lookup needed: the running container already has the right newtId/secret
+baked into its own compose file from whenever it was provisioned). An
+agent with no `/opt/newt` bundle yet is skipped, not an error. This is
+best-effort, not gating: an unreachable/not-yet-onboarded agent is
+recorded as a warning, since the restore itself already succeeded and
+`charmer monitor`/`logs` is where ongoing agent health belongs.
 """
 
 from __future__ import annotations
@@ -55,13 +66,19 @@ class RestorePhase(Phase):
         dump = ctx.cfg.restore_dump
         if not dump:
             return ["no restore.postgres_dump configured: this phase will be SKIPPED"]
-        return [
+        lines = [
             f"restore {dump} onto the pangolin Postgres database: REPLACES all current data",
             "stop pangolin/gerbil/traefik first (Postgres stays up so it can be loaded into)",
             "upload, sha256-verify, load with ON_ERROR_STOP, delete the dump from the host",
             "reconcile this host's gerbil identity (publicKey/reachableAt) back onto the restored exitNodes row",
             "restart the stack and health-gate before declaring the phase done",
         ]
+        if ctx.cfg.newt_agents:
+            lines.append(
+                f"restart the existing newt container (no re-mint, no compose changes) on "
+                f"{len(ctx.cfg.newt_agents)} configured agent(s) with a bundle already in place, "
+                "so they redial gerbil's recreated WireGuard process instead of sitting disconnected")
+        return lines
 
     def apply(self, ctx: PhaseContext) -> None:
         cfg = ctx.cfg
@@ -178,10 +195,35 @@ class RestorePhase(Phase):
         if not r.ok:
             raise RuntimeError("failed to restart traefik after restore")
 
+        for agent_conn in ctx.agents:
+            self._redial_newt(ctx, agent_conn)
+
         ctx.state.data["generated"]["restore_sha256"] = digest
         ctx.state.data["generated"]["restore_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         ctx.state.save()
         ctx.restore_ran = True
+
+    def _redial_newt(self, ctx: PhaseContext, agent_conn) -> None:
+        """Restart `agent_conn`'s existing newt container so it redials the
+        gerbil process this phase just recreated. No credentials touched, no
+        compose file rewritten: an agent with no bundle yet (never
+        provisioned by this site, or genuinely new) is skipped, not an
+        error; an agent that fails to come back is a warning, not a phase
+        failure (see module docstring)."""
+        node = agent_conn.name
+        if not agent_conn.run("test -f /opt/newt/docker-compose.yml").ok:
+            ctx.record(node, "newt redial", True, "no /opt/newt bundle here yet, nothing to restart")
+            return
+        ctx.begin(node, "restarting newt", "redialing gerbil's recreated WireGuard process")
+        r = agent_conn.run("cd /opt/newt && docker compose restart newt", timeout=60)
+        if not r.ok:
+            ctx.record(node, "newt redial", False, r.err, warn=True)
+            return
+        stable = wait_for(agent_conn, "cd /opt/newt && docker compose ps newt --format '{{.State}}'",
+                          expect="running", timeout=60, interval=3)
+        ctx.record(node, "newt redial", stable,
+                   "" if stable else "did not return to running; check docker compose logs newt on the agent",
+                   warn=not stable)
 
     def verify(self, ctx: PhaseContext) -> bool:
         if not ctx.cfg.restore_dump:

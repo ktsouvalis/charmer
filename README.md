@@ -339,6 +339,32 @@ afterward, keyed on the primary key, not `publicKey`, which is exactly
 what Pangolin's own logic can't do. Everything else on that row (address,
 name) comes from the dump untouched. See `phases/restore_phase.py`.
 
+Recreating gerbil above restarts its WireGuard process, which drops any
+Newt agent that was already tunneled in. Since `newt` (below) skips itself
+whenever a restore just ran, nothing else in the pipeline would otherwise
+tell those agents to redial. So, for each configured `newt_agents` entry
+that already has a bundle at `/opt/newt`, `restore` finishes by running a
+plain `docker compose restart newt` on it — no credentials re-minted, no
+compose file rewritten, no DB lookup: the container's own compose file
+already carries the right `newtId`/secret from whenever it was first
+provisioned. An agent with no bundle yet is skipped (nothing to restart);
+one that doesn't come back is recorded as a warning, not a phase failure,
+since the restore itself already succeeded by that point.
+
+This only reaches agents charmer already has SSH access to, i.e. ones
+listed in `newt_agents` in the config used for this run — it does no DB
+lookup and prompts for nothing. With `newt_agents` empty (Newt managed
+entirely outside charmer, a legitimate and common choice), this step is a
+no-op: charmer has no visibility into those hosts and won't try to gain
+any. Redialing them after a restore is then a manual step on whatever
+system manages them, same as before this feature existed.
+
+`charmer provision config.yml --only restore` scopes a run to just this
+phase regardless of `newt_agents`: `pangolin_phase` doesn't run, so
+`config.yml` is never re-rendered/re-pushed and nothing else
+force-recreates. That's the right way to do a DB-only restore whether or
+not you use `newt_agents` at all.
+
 ### newt
 
 Comes **after** `restore` in the pipeline, and is **skipped automatically**
@@ -579,8 +605,10 @@ custom `maintenance.logo`, the Newt agent provisioned and connected with a
 private resource published through it and reached from outside, and
 `shutdown`/`start`/`clean`/`monitor`/`logs` all run against that same live
 site. Not yet exercised for real: multiple Newt agents in the same run,
-`tls.provider: self_signed`/`import`, SQLite, and the `ssh.disable_password_auth`/
-`monitor.ips` opt-ins.
+`tls.provider: self_signed`/`import`, SQLite, the `ssh.disable_password_auth`/
+`monitor.ips` opt-ins, and `restore`'s post-restore newt-agent redial (added
+after the fact, from a real-world report of agents left disconnected post-
+restore; not yet run against a live agent).
 
 ## Roadmap
 
