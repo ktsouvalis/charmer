@@ -15,6 +15,14 @@ rules can be re-added freely. `apt upgrade` is deliberately not run here:
 package drift belongs to the operator's patching policy, not the
 provisioner.
 
+For the same reason, `base.unattended_upgrades: false` (optional, default
+true i.e. left alone) masks Ubuntu's own `unattended-upgrades.service` +
+`apt-daily-upgrade.timer` on every host: a package changing under a running
+stack on the OS's own schedule is the same package-drift-outside-the-
+provisioner's-control risk, just silent and on the OS's own timetable
+instead of the operator's. Masking (not just disabling) also survives a
+package's postinst re-enabling the unit on upgrade.
+
 `ssh.disable_password_auth` (per-host: the top-level `ssh:` block and each
 `newt_agents[].ssh:` block) is an opt-in, per-host switch to key-only sshd
 once the operator is confident key/agent auth works. config.py refuses it
@@ -195,6 +203,7 @@ class BasePhase(Phase):
 
     def plan(self, ctx: PhaseContext) -> list[str]:
         names = ", ".join(c.name for c in ctx.fleet)
+        disable_uu = not ctx.cfg.unattended_upgrades
         mon_ips = self._monitor_ips_pinned(ctx)
         already_asked = bool(ctx.cfg.monitor_ips) or "monitor_ips" in ctx.state.data["generated"]
         hostname = self._hostname_pinned(ctx)
@@ -219,6 +228,10 @@ class BasePhase(Phase):
             f"apt update + install baseline packages on {names}",
             "Pangolin host also gets chrony",
             hostname_line,
+            "mask unattended-upgrades + apt-daily-upgrade.timer on every host (OS auto-updates "
+            "can replace packages on their own schedule; set base.unattended_upgrades: true to "
+            "leave them alone)" if disable_uu else
+            "leave OS unattended-upgrades as configured (base.unattended_upgrades: true)",
             "install Docker CE from download.docker.com on every host (no-op if present)",
             "write /etc/docker/daemon.json with real DNS resolvers if none exists yet, restarting docker: "
             "avoids a Docker + systemd-resolved interaction where containers get the host's unreachable "
@@ -236,6 +249,7 @@ class BasePhase(Phase):
         return lines
 
     def apply(self, ctx: PhaseContext) -> None:
+        disable_uu = not ctx.cfg.unattended_upgrades
         mon_ips = self._monitor_ips(ctx)  # may prompt, before any node is touched
         hostname = self._hostname(ctx)  # may prompt, before any node is touched
 
@@ -270,6 +284,18 @@ class BasePhase(Phase):
             ctx.record(node, "baseline packages", r.ok, r.err.splitlines()[-1] if (not r.ok and r.err) else "")
             if is_host:
                 conn.run("systemctl enable --now chrony")
+
+            # Masking (not just disabling) stops `systemctl start` --
+            # including a package upgrade's postinst re-enabling the timer --
+            # from ever bringing it back without an explicit unmask. Both the
+            # service and its timer trigger are covered; -daily.timer (list
+            # refresh only, no upgrade) is left alone.
+            if disable_uu:
+                r = conn.run("systemctl disable --now unattended-upgrades.service "
+                             "apt-daily-upgrade.timer 2>/dev/null; "
+                             "systemctl mask unattended-upgrades.service "
+                             "apt-daily-upgrade.timer")
+                ctx.record(node, "unattended-upgrades masked", r.ok, r.err if not r.ok else "")
 
             if is_host and hostname:
                 current = conn.run("hostname").out.strip()
@@ -347,6 +373,7 @@ class BasePhase(Phase):
 
     def verify(self, ctx: PhaseContext) -> bool:
         ok = True
+        disable_uu = not ctx.cfg.unattended_upgrades
         mon_ips = self._monitor_ips_pinned(ctx)
         hostname = self._hostname_pinned(ctx)
         for conn in ctx.fleet:
@@ -355,6 +382,10 @@ class BasePhase(Phase):
                 ("docker compose available", "docker compose version >/dev/null"),
                 ("ufw active", "ufw status | grep -q 'Status: active'"),
             ]
+            if disable_uu:
+                checks.append(("unattended-upgrades masked",
+                               "systemctl is-enabled unattended-upgrades.service 2>&1 | "
+                               "grep -q masked"))
             for ip in mon_ips:
                 checks.append((f"ssh allow-list includes {ip}", f"ufw status | grep -qF '{ip}'"))
             if conn is ctx.host and hostname:

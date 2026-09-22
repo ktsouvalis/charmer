@@ -204,6 +204,14 @@ P2P connection fails with `HOLEPUNCH_MISSING`); Newt agents get `ssh` only. Newt
 `apt upgrade` is deliberately not run: package drift belongs to your
 patching policy, not the provisioner.
 
+**Unattended upgrades, optional `base.unattended_upgrades`:** defaults to
+`true` (leave the OS's own `unattended-upgrades.service` +
+`apt-daily-upgrade.timer` alone, today's behavior). Set it to `false` and
+this phase masks both units on every host instead — not just disables, so a
+package's postinst can't silently re-enable the timer on its own upgrade.
+Same concern as `apt upgrade` never running automatically here, just on the
+OS's own silent schedule instead of yours.
+
 **SSH hardening, opt-in:** set `ssh.disable_password_auth: true` (top-level
 `ssh:` block, and/or per-agent `newt_agents[].ssh:`) once you're confident
 key/agent auth works against that host, and this phase locks its sshd to
@@ -664,9 +672,10 @@ private resource published through it and reached from outside, and
 `shutdown`/`start`/`clean`/`monitor`/`logs` all run against that same live
 site. Not yet exercised for real: multiple Newt agents in the same run,
 `tls.provider: self_signed`/`import`, SQLite, the `ssh.disable_password_auth`/
-`monitor.ips` opt-ins, and `restore`'s post-restore newt-agent redial (added
-after the fact, from a real-world report of agents left disconnected post-
-restore; not yet run against a live agent).
+`monitor.ips`/`base.unattended_upgrades` opt-ins, and `restore`'s
+post-restore newt-agent redial (added after the fact, from a real-world
+report of agents left disconnected post-restore; not yet run against a live
+agent).
 
 ## Roadmap
 

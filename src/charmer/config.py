@@ -147,6 +147,7 @@ class SiteConfig:
     restore_dump: str | None
     restore_destructive: bool
     monitor_ips: list[str]
+    unattended_upgrades: bool
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -413,6 +414,15 @@ def load(path: str | Path) -> SiteConfig:
                 continue
             monitor_ips.append(ip)
 
+    # --- base (optional) ---
+    # Defaults to True (leave the OS's own unattended-upgrades/apt-daily-
+    # upgrade.timer alone) so an existing config's behavior doesn't change
+    # under it; set base.unattended_upgrades: false to have `base` mask both
+    # units instead, closing the same package-drift-outside-the-provisioner's-
+    # control gap on the OS's own silent schedule. Purely additive and
+    # optional, so no config_version bump.
+    unattended_upgrades = bool(_get(raw, "base.unattended_upgrades", True))
+
     if problems:
         raise ConfigError(problems)
 
@@ -435,5 +445,6 @@ def load(path: str | Path) -> SiteConfig:
         restore_dump=restore_dump,
         restore_destructive=bool(_get(raw, "restore.destructive", False)),
         monitor_ips=monitor_ips,
+        unattended_upgrades=unattended_upgrades,
         raw=raw,
     )

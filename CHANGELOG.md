@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0] - 2026-09-22
+
+- **New optional `base.unattended_upgrades` — mask the OS's own
+  unattended-upgrades.** Defaults to `true` (leave
+  `unattended-upgrades.service` + `apt-daily-upgrade.timer` alone, today's
+  behavior); set to `false` and `base` masks both units on every host
+  (Pangolin host and every Newt agent), not just disables, so a package's
+  own postinst can't silently re-enable the timer on its next upgrade. Same
+  reasoning as `apt upgrade` never running automatically here — package
+  drift belongs to your patching policy, not the provisioner — just closing
+  the same gap on the OS's own silent schedule. Purely additive and
+  optional, like `monitor.ips`/`pangolin.host.hostname` before it, so no
+  `config_version` bump. See README "base".
+
 ## [0.5.0] - 2026-09-22
 
 - **`pangolin` now offers to reuse an existing `server.secret` instead of

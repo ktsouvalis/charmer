@@ -121,3 +121,11 @@ restore:
 #   ips:
 #     - 203.0.113.5        # a single admin workstation
 #     - 10.0.0.0/24        # or a whole management subnet
+
+# base:
+#   unattended_upgrades: false   # default true (left alone). Set false to have
+#                                 # `base` mask unattended-upgrades.service +
+#                                 # apt-daily-upgrade.timer on every host: apt
+#                                 # never runs unattended under charmer itself,
+#                                 # and this closes the same gap on the OS's
+#                                 # own silent schedule too.
