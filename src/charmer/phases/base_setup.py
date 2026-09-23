@@ -27,7 +27,15 @@ package's postinst re-enabling the unit on upgrade.
 `newt_agents[].ssh:` block) is an opt-in, per-host switch to key-only sshd
 once the operator is confident key/agent auth works. config.py refuses it
 alongside `auth: password`, so by the time this phase runs the connection
-in hand is already proven to work without a password.
+in hand is already proven to work without a password. The drop-in sorts
+early (01-) because sshd keeps the first value it reads, sets PermitRootLogin
+prohibit-password (never `no`, and never loosening an already-stricter
+value), and is checked against `sshd -T`'s effective values before anything
+is reloaded. Before reloading, this phase also checks for ssh.socket owning
+the ssh port alongside an enabled ssh.service (see hostchecks.py): a reload
+there kills sshd's listener, so the host is switched to plain ssh.service
+instead. Either way, apply and verify both confirm sshd itself (not only
+systemd) is listening afterwards and ssh.service is active.
 
 `monitor.ips` (site-wide, optional) scopes ssh on every host, Pangolin and
 every Newt agent alike, to a fixed allow-list of admin/monitoring source
@@ -77,15 +85,21 @@ from __future__ import annotations
 import ipaddress
 import re
 import shlex
+import time
 
+from ..hostchecks import (SSH_SOCKET_CONFLICT_FIX, SSHD_DROPIN_PATH, SSHD_LEGACY_DROPIN_PATH,
+                          listener_owners, sshd_effective_problems, sshd_hardening_dropin,
+                          ssh_socket_conflict)
 from ..remote import push_file
 from ..sshexec import NodeConn
 from .base import Phase, PhaseContext
 
 _HOSTNAME_LABEL_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$")
 
-BASE_PACKAGES = ("curl wget gnupg2 ca-certificates lsb-release "
-                 "apt-transport-https ufw jq unzip")
+# Named for what Ubuntu 24.04 and Debian 13 both ship as real packages
+# (gnupg, not the gnupg2 transitional name); the Docker repo setup reads
+# /etc/os-release itself, so no lsb-release/apt-transport-https.
+BASE_PACKAGES = "curl wget gnupg ca-certificates ufw jq unzip"
 HOST_PACKAGES = "chrony openssl"
 APT = "DEBIAN_FRONTEND=noninteractive apt-get -y -qq"
 
@@ -101,12 +115,23 @@ APT = "DEBIAN_FRONTEND=noninteractive apt-get -y -qq"
 # resulting dead end is first visible.
 DOCKER_DAEMON_JSON = '{\n  "dns": ["1.1.1.1", "8.8.8.8"]\n}\n'
 
+# download.docker.com has a separate repo per distro (linux/ubuntu,
+# linux/debian), picked from /etc/os-release's ID: Newt agents are
+# arbitrary SSH hosts, and Debian ones (e.g. Proxmox LXC templates) are
+# common. Anything else fails loudly instead of pointing apt at the wrong
+# repo.
 DOCKER_INSTALL = r"""
+set -e
+. /etc/os-release
+case "$ID" in
+  ubuntu|debian) ;;
+  *) echo "no Docker CE repo setup for distro '$ID' (ubuntu/debian only): install Docker yourself, then re-run base" >&2; exit 1 ;;
+esac
 install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+curl -fsSL "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+https://download.docker.com/linux/$ID $VERSION_CODENAME stable" \
 > /etc/apt/sources.list.d/docker.list
 apt-get -qq update
 DEBIAN_FRONTEND=noninteractive apt-get -y -qq install docker-ce docker-ce-cli containerd.io \
@@ -140,6 +165,17 @@ def _client_ip(conn: NodeConn) -> str | None:
     if not r.ok or not r.out:
         return None
     return r.out.split()[0] or None
+
+
+def _sshd_listening(conn: NodeConn) -> tuple[bool, str]:
+    """sshd itself (not only systemd) holds a listener on the port charmer
+    connects on, and ssh.service is active. `sshd -t` passing proves
+    neither: a reload can validate cleanly and still leave sshd dead."""
+    port = conn.cfg.port
+    owners = listener_owners(conn.run("ss -Htlnp").out, port)
+    active = conn.run("systemctl is-active ssh.service").out.strip()
+    ok = "sshd" in owners and active == "active"
+    return ok, f":{port} held by {', '.join(sorted(owners)) or 'nothing'}; ssh.service {active or 'unknown'}"
 
 
 class BasePhase(Phase):
@@ -245,7 +281,14 @@ class BasePhase(Phase):
         hardened = [c.name for c in ctx.fleet if c.cfg.disable_password_auth]
         if hardened:
             lines.append(f"disable SSH password authentication (key-only from here on) on: "
-                         f"{', '.join(hardened)}; sshd config is validated (`sshd -t`) before reload")
+                         f"{', '.join(hardened)}: write {SSHD_DROPIN_PATH} (PasswordAuthentication no, "
+                         "KbdInteractiveAuthentication no, PubkeyAuthentication yes, PermitRootLogin "
+                         "prohibit-password unless already stricter), validated with `sshd -t` and "
+                         "checked against `sshd -T`'s effective values before reload")
+            lines.append("  on any of those hosts where ssh.socket owns the ssh port alongside an enabled "
+                         "ssh.service (a reload there kills sshd's listener): switch to plain ssh.service "
+                         f"instead ({SSH_SOCKET_CONFLICT_FIX}), falling back to restarting ssh.socket if "
+                         "sshd doesn't come up; then confirm sshd itself is listening")
         return lines
 
     def apply(self, ctx: PhaseContext) -> None:
@@ -317,6 +360,13 @@ class BasePhase(Phase):
 
             if conn.run("command -v docker && docker compose version").ok:
                 ctx.record(node, "docker", True, "already installed")
+            elif conn.run("command -v docker").ok:
+                # Docker from somewhere else (e.g. the distro's docker.io):
+                # installing docker-ce over it makes apt fail on conflicting
+                # packages, so leave it to the operator.
+                ctx.record(node, "docker", False,
+                           "docker is installed but `docker compose` isn't; not installing Docker CE over "
+                           "an existing Docker: add a compose v2 plugin yourself, then re-run base")
             else:
                 ctx.begin(node, "installing Docker CE", "keyring + repo + packages")
                 r = conn.run(DOCKER_INSTALL, timeout=900)
@@ -355,21 +405,87 @@ class BasePhase(Phase):
             # refused at config-load time whenever this host's own auth is "password"
             # (config.py's _validate_ssh), so by the time apply() reaches here, this
             # connection is already proven to work over key/agent auth (preflight gates
-            # the whole pipeline on that), and a drop-in + `sshd -t` before reload means
-            # a bad config is caught before anything is reloaded, not after.
+            # the whole pipeline on that).
             if conn.cfg.disable_password_auth:
-                ctx.begin(node, "disabling SSH password authentication", "key-only from here on")
-                script = (
-                    "install -d -m 0755 /etc/ssh/sshd_config.d && "
-                    "printf 'PasswordAuthentication no\\nKbdInteractiveAuthentication no\\n' "
-                    "> /etc/ssh/sshd_config.d/60-charmer-key-only.conf && "
-                    "sshd -t && (systemctl reload ssh || systemctl reload sshd)"
-                )
-                r = conn.run(script, timeout=30)
-                ctx.record(node, "ssh password auth disabled", r.ok, r.err if not r.ok else "")
-                if not r.ok:
-                    raise RuntimeError(f"{node}: sshd config validation/reload failed: "
-                                       "password auth left as-is")
+                self._harden_sshd(ctx, conn)
+
+    def _harden_sshd(self, ctx: PhaseContext, conn: NodeConn) -> None:
+        """Drop-in, `sshd -t`, `sshd -T` effective-value check, then reload
+        (or, on a socket/service conflict, switch to plain ssh.service), then
+        prove sshd itself is listening. Every failure before the reload
+        removes the drop-in again, so nothing half-applied is left for the
+        next unrelated sshd restart to pick up."""
+        node = conn.name
+        port = conn.cfg.port
+        ctx.begin(node, "disabling SSH password authentication", "key-only from here on")
+
+        r = conn.run("sshd -T")
+        if not r.ok:
+            ctx.record(node, "ssh password auth disabled", False, f"`sshd -T` failed: {r.err}")
+            raise RuntimeError(f"{node}: can't read sshd's effective config: password auth left as-is")
+        current_root = next((line.split(None, 1)[1] for line in r.out.splitlines()
+                             if line.lower().startswith("permitrootlogin ")), "")
+        push_file(conn, sshd_hardening_dropin(current_root), SSHD_DROPIN_PATH, mode="0644")
+
+        def abort(detail: str) -> None:
+            conn.run(f"rm -f {SSHD_DROPIN_PATH}")
+            ctx.record(node, "ssh password auth disabled", False, detail)
+            raise RuntimeError(f"{node}: {detail}: drop-in removed, sshd not reloaded, "
+                               "password auth left as-is")
+
+        r = conn.run("sshd -t")
+        if not r.ok:
+            abort(f"`sshd -t` failed: {r.err}")
+        problems = sshd_effective_problems(conn.run("sshd -T").out)
+        if problems:
+            abort(f"effective sshd config still not key-only ({'; '.join(problems)}): a value set in "
+                  "sshd_config before its Include line, or in an even earlier-sorting sshd_config.d "
+                  "file, wins over the drop-in")
+        conn.run(f"rm -f {SSHD_LEGACY_DROPIN_PATH}")
+
+        conflict = ssh_socket_conflict(conn.run("ss -Htlnp").out, port,
+                                       conn.run("systemctl is-active ssh.socket").out,
+                                       conn.run("systemctl is-enabled ssh.service").out)
+        if conflict:
+            ctx.begin(node, "switching sshd to plain ssh.service",
+                      f"ssh.socket owns :{port} alongside an enabled ssh.service")
+            r = conn.run(SSH_SOCKET_CONFLICT_FIX, timeout=60)
+            action = "switched from ssh.socket to plain ssh.service"
+        else:
+            r = conn.run("systemctl reload ssh || systemctl reload sshd", timeout=30)
+            action = "reloaded"
+
+        # A reload job can report success while sshd dies right after
+        # re-exec, so the reload's own exit status proves nothing: poll for
+        # the listener instead, after a moment for the SIGHUP to land (the
+        # reload is asynchronous; polling at once can still see the old
+        # sshd holding the port).
+        time.sleep(2)
+        listening, state = False, ""
+        for _ in range(10):
+            listening, state = _sshd_listening(conn)
+            if listening:
+                break
+            time.sleep(1)
+        if listening:
+            ctx.record(node, "ssh password auth disabled", True, f"{SSHD_DROPIN_PATH}; sshd {action}; {state}")
+            return
+
+        journal = conn.run("journalctl -u ssh.service -n 5 --no-pager -o cat").out.replace("\n", " | ")
+        if conflict:
+            # Put the socket back (enabled too, so it survives a reboot) so
+            # new logins keep working the way they did before.
+            conn.run("systemctl enable --now ssh.socket")
+            hint = ("ssh.socket re-enabled so new logins keep working as before; fix ssh.service by "
+                    f"hand, then `{SSH_SOCKET_CONFLICT_FIX}`")
+        else:
+            hint = ("NEW SSH LOGINS WILL FAIL until sshd is back: from a session that's still open, "
+                    "check `journalctl -u ssh.service`; if systemd owns the port, "
+                    f"`{SSH_SOCKET_CONFLICT_FIX}`")
+        ctx.record(node, "ssh password auth disabled", False,
+                   f"sshd not listening after {action if r.ok else action + ' (command failed: ' + r.err + ')'}: "
+                   f"{state}; journal: {journal}; {hint}")
+        raise RuntimeError(f"{node}: sshd is not listening on :{port} after hardening")
 
     def verify(self, ctx: PhaseContext) -> bool:
         ok = True
@@ -390,12 +506,17 @@ class BasePhase(Phase):
                 checks.append((f"ssh allow-list includes {ip}", f"ufw status | grep -qF '{ip}'"))
             if conn is ctx.host and hostname:
                 checks.append(("OS hostname matches", f"[ \"$(hostname)\" = {shlex.quote(hostname)} ]"))
-            if conn.cfg.disable_password_auth:
-                checks.append(("ssh password auth disabled", "sshd -T | grep -qi '^passwordauthentication no'"))
             for label, cmd in checks:
                 r = conn.run(cmd)
                 ctx.record(node, f"verify: {label}", r.ok, r.err if not r.ok else "")
                 ok = ok and r.ok
+
+            if conn.cfg.disable_password_auth:
+                problems = sshd_effective_problems(conn.run("sshd -T").out)
+                ctx.record(node, "verify: sshd effective config key-only", not problems, "; ".join(problems))
+                listening, state = _sshd_listening(conn)
+                ctx.record(node, "verify: sshd listening + ssh.service active", listening, state)
+                ok = ok and not problems and listening
 
             # Real probe, not just checking daemon.json is present: proves a
             # freshly-created container actually gets working DNS end to

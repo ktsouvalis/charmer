@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.9.0] - 2026-09-23
+
+Fixes for what `base`/`preflight` would have gotten wrong on Proxmox
+community-scripts "Docker LXC" Newt agents (Debian 13), found while
+hardening three of them by hand. No `config_version` bump: no config key
+was added, renamed or made required. `ssh.disable_password_auth: true`
+does now also set `PermitRootLogin prohibit-password` (unless the current
+value is already stricter), so re-running `base` on a host that already had
+it on will tighten root login too.
+
+- **`ssh.disable_password_auth` no longer kills sshd on hosts where
+  `ssh.socket` owns the ssh port alongside an enabled `ssh.service`.** In
+  that state a `systemctl reload ssh` makes sshd re-exec, fail with `fatal:
+  Cannot bind any address.` and exit (the reload job can still report
+  success), so new logins break while open sessions carry on. This
+  happened on all three hosts. `base` now detects it before touching sshd
+  and switches the host to plain `ssh.service` (`systemctl disable --now
+  ssh.socket && systemctl enable ssh.service && systemctl restart
+  ssh.service`); if sshd doesn't come up, it re-enables `ssh.socket` and
+  fails loudly. Ubuntu 24.04's default socket activation (`ssh.service`
+  disabled) isn't a conflict and still just gets a reload.
+- **The sshd drop-in is now `01-charmer-hardening.conf`** (was
+  `60-charmer-key-only.conf`, removed on the next run). sshd keeps the
+  first value it reads and reads drop-ins in lexical order, so the old name
+  could lose to e.g. Ubuntu's `50-cloud-init.conf` (`PasswordAuthentication
+  yes`). It now also sets `PubkeyAuthentication yes` and `PermitRootLogin
+  prohibit-password` (never `no`, and never loosening an already-stricter
+  value). Its effective values are checked through `sshd -T` before
+  anything is reloaded; the drop-in is removed again if they don't hold.
+- **`base` apply and `verify()` now confirm sshd itself is listening** on
+  the ssh port (not only systemd) and `ssh.service` is active, after the
+  reload/restart. `sshd -t` passing and the reload's exit status proved
+  neither.
+- **`preflight` reports a Docker API reachable over TCP on every host**
+  (listener on 2375/2376, dockerd on any other TCP port except Swarm's
+  2377/7946, or a `tcp://` host in `daemon.json` / dockerd's args). The
+  template shipped `tcp://0.0.0.0:2375` with no TLS or auth. Refused in
+  `production`, a warning in `lab`, report only.
+- **`preflight` warns about the `ssh.socket`/`ssh.service` conflict on
+  every host**, whether or not `disable_password_auth` is on: any sshd
+  restart, including an openssh upgrade, hits it.
+- **Debian Newt agents: `base`'s Docker CE repo is no longer hardcoded to
+  Ubuntu.** It's picked from `/etc/os-release`'s `ID`
+  (`download.docker.com/linux/{ubuntu,debian}`); other distros fail that
+  step clearly. Hosts with `docker` but no `docker compose` are reported
+  instead of getting Docker CE installed over them. Baseline packages drop
+  `lsb-release`/`apt-transport-https` (unused) and use `gnupg` instead of
+  the transitional `gnupg2`. `preflight` now reports each agent's OS
+  (warning unless Ubuntu/Debian); the Pangolin host's "warn if not Ubuntu
+  24.04" is unchanged. The agent "docker present" line now correctly says
+  `base` installs Docker, not `newt`.
+- README "Verification status": UFW verified inside a real unprivileged
+  Debian 13 LXC, and the sshd hardening procedure exercised by hand on real
+  Debian 13 LXCs. Charmer's automation of it is unit-tested, not yet run
+  end-to-end.
+
 ## [0.8.0] - 2026-09-22
 
 - **New optional `pangolin.integration_api.enabled` / `.port`.** The

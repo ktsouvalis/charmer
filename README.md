@@ -37,7 +37,7 @@ doesn't bundle, modify, or redistribute any of them.
 
 | Phase | Status |
 |---|---|
-| preflight | read-only, implemented, verified |
+| preflight | read-only, implemented, verified (Docker-API-on-TCP + ssh.socket checks new in 0.9.0, unit-tested only) |
 | base | implemented, verified |
 | pangolin | implemented, verified, official Compose layout, exercised with `acme` (staging, then real Let's Encrypt production) |
 | restore | implemented, verified, both the skipped path (no dump configured) and a real destructive restore |
@@ -173,7 +173,9 @@ already carries pangolin/gerbil/traefik/postgres containers. State-aware:
 the footprint of already-completed phases is expected on a resumed run, not
 a failure.
 
-For each Newt agent: SSH reachability, whether Docker is already present,
+For each Newt agent: SSH reachability, OS release (Ubuntu or Debian is
+fine; anything else is a warning, since `base` can only install Docker CE
+from download.docker.com on those two), whether Docker is already present,
 and a **real** TUN capability test: `ip tuntap add ... && ip link delete`
 as root, not just `test -c /dev/net/tun`. A device node can exist and still
 be blocked at the cgroup layer, which is exactly the failure mode of an
@@ -191,10 +193,39 @@ added to the container's `<id>.conf` on the **hypervisor**, or make it
 privileged / use a VM instead. Charmer has no SSH path to the hypervisor
 to fix this itself.
 
+On **every** host (Pangolin host and each Newt agent), two more read-only
+checks, both found for real on Proxmox community-scripts "Docker LXC"
+templates (Debian 13). Preflight only reports them and changes nothing:
+
+- **Docker API on TCP:** a listener on `2375`/`2376`, dockerd listening on
+  any other TCP port (its Swarm ports `2377`/`7946` excepted), or any
+  `tcp://` entry in `/etc/docker/daemon.json`'s `hosts` or on dockerd's own
+  `-H`/`--host` args. That template ships `"hosts": [..., "tcp://0.0.0.0:2375"]`
+  with no TLS or auth, i.e. root on the host for anyone who can reach it
+  (and, on a privileged container, on the hypervisor too). **Refused in
+  `production`, a warning in `lab`.** The fix is yours: drop the `tcp://`
+  entry and restart docker.
+- **ssh.socket fighting sshd for the ssh port** (warning only): systemd
+  owning the port through `ssh.socket` while `ssh.service` is *also*
+  enabled. In that state any sshd reload/restart, including a routine
+  openssh upgrade, dies with `fatal: Cannot bind any address.` and new
+  logins fail while open sessions carry on as if nothing happened. `base`
+  fixes this itself when `ssh.disable_password_auth` is on (below); by hand
+  it's `systemctl disable --now ssh.socket && systemctl enable ssh.service
+  && systemctl restart ssh.service`. Ubuntu 24.04's default socket
+  activation (`ssh.socket` enabled, `ssh.service` disabled) is **not** this
+  and isn't flagged.
+
 ### base
 
 Baseline packages, Docker CE from Docker's own repo, on every host
-(Pangolin host + every Newt agent). The Pangolin host additionally gets
+(Pangolin host + every Newt agent). The repo is picked from
+`/etc/os-release`'s `ID` (`download.docker.com/linux/ubuntu` or
+`/linux/debian`, so Debian Newt agents work too); any other distro fails
+that step with a clear message. A host that already has `docker` +
+`docker compose` is left alone; one with `docker` but no `docker compose`
+(e.g. the distro's own `docker.io`) is reported as a failure instead of
+getting Docker CE installed over it, which apt would refuse anyway. The Pangolin host additionally gets
 `chrony`. UFW: the Pangolin host gets `ssh`/`80`/`443` plus
 `51820/udp`/`21820/udp` for Gerbil (host-published
 wildcard, exactly as the official compose does it: its WireGuard handshake
@@ -203,6 +234,11 @@ P2P connection fails with `HOLEPUNCH_MISSING`); Newt agents get `ssh` only. Newt
 **outbound** connection to Pangolin, so there's nothing else to open.
 `apt upgrade` is deliberately not run: package drift belongs to your
 patching policy, not the provisioner.
+
+UFW works inside LXC containers too, unprivileged ones included (verified
+on a real unprivileged Debian 13 LXC, see [Verification
+status](#verification-status)): `deny incoming` doesn't break Newt, since
+Docker's own `FORWARD` rules come ahead of UFW's for container traffic.
 
 **Unattended upgrades, optional `base.unattended_upgrades`:** defaults to
 `true` (leave the OS's own `unattended-upgrades.service` +
@@ -215,11 +251,46 @@ OS's own silent schedule instead of yours.
 **SSH hardening, opt-in:** set `ssh.disable_password_auth: true` (top-level
 `ssh:` block, and/or per-agent `newt_agents[].ssh:`) once you're confident
 key/agent auth works against that host, and this phase locks its sshd to
-key-only: a drop-in under `/etc/ssh/sshd_config.d/`, validated with
-`sshd -t` before the reload so a bad config is caught before anything
-changes. `config.py` refuses the combination with `auth: password` at
+key-only. `config.py` refuses the combination with `auth: password` at
 config-load time, since that would lock you out on the very apply that
 turns it on. Defaults to `false`; nothing changes unless you opt in.
+
+What it does, in order, per host:
+
+1. Writes `/etc/ssh/sshd_config.d/01-charmer-hardening.conf`:
+   ```
+   PasswordAuthentication no
+   KbdInteractiveAuthentication no
+   PermitRootLogin prohibit-password
+   PubkeyAuthentication yes
+   ```
+   sshd keeps the **first** value it reads for an option, and reads
+   `sshd_config.d/*.conf` in lexical order through the `Include` at the top
+   of `sshd_config`, so the `01-` prefix is what makes it win over e.g.
+   Ubuntu's `50-cloud-init.conf` (`PasswordAuthentication yes`) or a
+   template's `PermitRootLogin yes`. `PermitRootLogin` is
+   `prohibit-password`, never `no` (you may well be SSHing in as root with
+   a key), and the line is left out entirely if the current effective value
+   is already stricter (`no`/`forced-commands-only`), so charmer never
+   loosens it. (Before 0.9.0 this was `60-charmer-key-only.conf`, which
+   could lose to `50-cloud-init.conf`; it's removed.)
+2. `sshd -t`, then checks `sshd -T`'s **effective** values. If either
+   fails (e.g. a value set in `sshd_config` *before* its `Include` line
+   still wins), the drop-in is removed again and nothing is reloaded.
+3. If `ssh.socket` owns the ssh port alongside an enabled `ssh.service`
+   (see preflight above), a reload would kill sshd, so this switches the
+   host to plain `ssh.service` instead (`systemctl disable --now
+   ssh.socket && systemctl enable ssh.service && systemctl restart
+   ssh.service`). Otherwise, including Ubuntu 24.04's default socket
+   activation, it's a plain `systemctl reload ssh`.
+4. Confirms **sshd itself** (not only systemd) holds a listener on the ssh
+   port and `ssh.service` is active. A reload job can report success while
+   sshd dies right after re-exec, so neither `sshd -t` nor the reload's
+   exit status proves anything here. If sshd isn't back, the phase fails
+   loudly with the last journal lines and the fix; if that happened on the
+   socket-switch path, `ssh.socket` is re-enabled first so new logins keep
+   working as they did before. `verify()` repeats the effective-config and
+   listener checks.
 
 **SSH source scoping, opt-in:** set `monitor.ips` (a list of admin/monitoring
 IPs or CIDRs) to scope `ssh` on every host (Pangolin and every Newt agent
@@ -706,11 +777,33 @@ custom `maintenance.logo`, the Newt agent provisioned and connected with a
 private resource published through it and reached from outside, and
 `shutdown`/`start`/`clean`/`monitor`/`logs` all run against that same live
 site. Not yet exercised for real: multiple Newt agents in the same run,
-`tls.provider: self_signed`/`import`, SQLite, the `ssh.disable_password_auth`/
-`monitor.ips`/`base.unattended_upgrades` opt-ins, and `restore`'s
+`tls.provider: self_signed`/`import`, SQLite, the `monitor.ips`/
+`base.unattended_upgrades` opt-ins, and `restore`'s
 post-restore newt-agent redial (added after the fact, from a real-world
 report of agents left disconnected post-restore; not yet run against a live
 agent).
+
+**Hardening on real Debian 13 LXC Newt agents** (three Proxmox
+community-scripts "Docker LXC" containers, two privileged and one
+unprivileged, provisioned outside charmer and hardened **by hand**):
+
+- UFW (`0.36.2`, iptables `1.8.11` nf_tables) with `deny incoming` /
+  `allow outgoing` / `deny routed` and ssh scoped to two admin IPs works
+  inside the **unprivileged** container too. All three sites stayed Online
+  and resources behind each agent kept loading.
+- The sshd hardening path now in `base` was exercised step by step on all
+  three: the `ssh.socket`/`ssh.service` conflict reproduced for real (a
+  reload killed sshd's listener on every host), the socket-to-service
+  switch fixed it, and the `01-` drop-in with `PermitRootLogin
+  prohibit-password` was confirmed through `sshd -T`.
+- The Docker-API-on-TCP finding (`tcp://0.0.0.0:2375` in `daemon.json`) was
+  present on all three.
+
+Charmer's own automation of these (`base`'s `ssh.disable_password_auth`,
+the new preflight checks, the Debian Docker CE repo) is covered by unit
+tests against canned `ss`/`systemctl`/`sshd -T` output, but has **not yet
+run end-to-end against a live host**, and neither has the unchanged
+reload path on Ubuntu 24.04's default socket activation.
 
 ## Roadmap
 

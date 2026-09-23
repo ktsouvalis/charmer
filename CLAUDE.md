@@ -26,6 +26,9 @@ truth for "where things stand," not this file.
   (phase name `base`), `pangolin_phase`, `newt_phase`, `restore_phase`,
   `handoff_phase`, plus `lifecycle.py` (shutdown/start) and
   `clean_phase.py`.
+- `src/charmer/hostchecks.py` — pure detection logic over canned command
+  output (ssh.socket/ssh.service conflict, sshd effective config, Docker API
+  on TCP), shared by `preflight` (report) and `base` (acts on it).
 - `src/charmer/pangolin_api.py` — the integration-API client used only by
   the `newt` phase, called over the existing SSH connection against
   loopback, never over the public internet.
@@ -64,6 +67,15 @@ truth for "where things stand," not this file.
   API (see `pangolin_api.py` and README "Newt credential automation"), not
   pasted in by hand — the Root API key and org ID are the one prompted,
   state-pinned exception.
+- sshd drop-ins must sort early (`01-`) and use `PermitRootLogin
+  prohibit-password`, never `no` (and never loosen an already-stricter
+  value). sshd keeps the first value it reads.
+- Never reload sshd without first checking that `ssh.socket` isn't the
+  owner of the ssh port alongside an enabled `ssh.service`, and after any
+  reload/restart confirm sshd itself is listening. `sshd -t` alone proves
+  nothing.
+- A Docker API on TCP (2375/2376, or any `tcp://` dockerd host) is always a
+  preflight finding: refused in production, warned in lab.
 - Keep local state, generated secrets, and the transcript log mode `0600`.
 - `charmer monitor` and `charmer logs` are the two migrated-utility names;
   don't reintroduce the old `create_`/`normalize_` tools or the plain
