@@ -9,14 +9,15 @@ create_newt_site() below are the only calls this module makes, and both are
 scoped under that permission. From then on this module drives it.
 
 Every call here runs over the EXISTING SSH connection to the Pangolin host
-and hits the integration API on loopback (`127.0.0.1:{INTEGRATION_PORT}`),
-never over the public internet, and never through Traefik. The
-integration API is charmer's own tool for minting agent credentials, not a
-public interface, so it is deliberately never routed through the public TLS
-boundary (see README "Ingress"). This also means charmer itself never needs
-network reachability to the API independent of the SSH connection it already
-has, and the root key never leaves the host it's used on except to live
-(pinned) in local state.
+and hits the integration API on loopback (`127.0.0.1:{port}`, `3003` unless
+`pangolin.integration_api.port` overrides it, see config.py), never over the
+public internet, and never through Traefik. The integration API is
+charmer's own tool for minting agent credentials, not a public interface,
+so it is deliberately never routed through the public TLS boundary (see
+README "Ingress"). This also means charmer itself never needs network
+reachability to the API independent of the SSH connection it already has,
+and the root key never leaves the host it's used on except to live (pinned)
+in local state.
 
 Route paths and the `flags.enable_integration_api` / `server.integration_port`
 config.yml keys are confirmed against docs.pangolin.net (self-host/advanced/
@@ -53,12 +54,13 @@ class PangolinAPIError(RuntimeError):
     pass
 
 
-def _call(conn: NodeConn, root_key: str, method: str, path: str, body: dict | None = None) -> dict:
+def _call(conn: NodeConn, root_key: str, method: str, path: str, body: dict | None = None,
+          port: int = INTEGRATION_PORT) -> dict:
     data_flag = ""
     if body is not None:
         data_flag = f"-H 'Content-Type: application/json' -d {shlex.quote(json.dumps(body))}"
     cmd = (
-        f"curl -sS -X {method} http://127.0.0.1:{INTEGRATION_PORT}{API_PREFIX}{path} "
+        f"curl -sS -X {method} http://127.0.0.1:{port}{API_PREFIX}{path} "
         f"-H {shlex.quote('Authorization: Bearer ' + root_key)} "
         f"-w {shlex.quote(_STATUS_SEP + '%{http_code}')} {data_flag}"
     )
@@ -79,17 +81,17 @@ def _call(conn: NodeConn, root_key: str, method: str, path: str, body: dict | No
         raise PangolinAPIError(f"{method} {path}: non-JSON response: {payload}") from exc
 
 
-def pick_site_defaults(conn: NodeConn, root_key: str, org_id: str) -> dict:
+def pick_site_defaults(conn: NodeConn, root_key: str, org_id: str, port: int = INTEGRATION_PORT) -> dict:
     """GET /org/{orgId}/pick-site-defaults -> a fresh {newtId, newtSecret, clientAddress}."""
-    resp = _call(conn, root_key, "GET", f"/org/{quote(org_id, safe='')}/pick-site-defaults")
+    resp = _call(conn, root_key, "GET", f"/org/{quote(org_id, safe='')}/pick-site-defaults", port=port)
     return resp.get("data", resp)
 
 
 def create_newt_site(conn: NodeConn, root_key: str, org_id: str, name: str,
-                      newt_id: str, newt_secret: str) -> dict:
+                      newt_id: str, newt_secret: str, port: int = INTEGRATION_PORT) -> dict:
     """PUT /org/{orgId}/site -> the created site, echoing newtId/secret back
     so the caller can confirm the server accepted the exact credentials it
     was asked to use (rather than trusting the response blindly)."""
     body = {"name": name, "type": "newt", "newtId": newt_id, "secret": newt_secret}
-    resp = _call(conn, root_key, "PUT", f"/org/{quote(org_id, safe='')}/site", body)
+    resp = _call(conn, root_key, "PUT", f"/org/{quote(org_id, safe='')}/site", body, port=port)
     return resp.get("data", resp)

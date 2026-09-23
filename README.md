@@ -293,8 +293,10 @@ phase's calls into the integration API: see
 API from the host over loopback, which the official layout never exposes
 (it's bridge-internal only, reachable by Traefik as `pangolin:3001`). So
 Pangolin's compose block additionally publishes `127.0.0.1:3001` always,
-and `127.0.0.1:3003` when any Newt agents are configured, both loopback
-bound, invisible off-host, and irrelevant to the official layout's own
+and `127.0.0.1:<port>` (`3003` by default, or whatever
+`pangolin.integration_api.port` sets) when the integration API is on --
+any Newt agents configured, or `pangolin.integration_api.enabled: true` --
+both loopback bound, invisible off-host, and irrelevant to the official layout's own
 container-to-container traffic.
 
 Gerbil's `start_port` is hardcoded to `51820`, never a config knob: setting
@@ -323,9 +325,11 @@ compose up -d` is idempotent, so the already-healthy containers are left
 alone and only Gerbil/Traefik are retried.
 
 Also renders whatever the configured `tls.provider` needs on Traefik's
-side (see [Ingress](#ingress)) and, when any Newt agents are configured,
-turns on Pangolin's integration API (`flags.enable_integration_api`,
-loopback-only) for the `newt` phase to use.
+side (see [Ingress](#ingress)) and turns on Pangolin's integration API
+(`flags.enable_integration_api`, loopback-only) when any Newt agents are
+configured, or unconditionally if `pangolin.integration_api.enabled: true`
+is set (see "Newt credential automation" for that and
+`pangolin.integration_api.port`).
 
 **Pangolin has no OIDC config.yml key.** Confirmed against
 docs.pangolin.net: setting up an external identity provider (Authentik,
@@ -563,10 +567,21 @@ PUT  /org/{orgId}/site                 → {name, type: "newt", newtId, secret} 
 confirmed against
 [docs.pangolin.net/manage/common-api-routes](https://docs.pangolin.net/manage/common-api-routes).
 Every call runs **over the existing SSH connection to the Pangolin host**,
-against the integration API on loopback (`127.0.0.1:3003`): never over
-the public internet, never routed through Traefik. It's charmer's
+against the integration API on loopback (`127.0.0.1:3003` by default): never
+over the public internet, never routed through Traefik. It's charmer's
 own tool for minting credentials, not a public interface, so it's
 deliberately never exposed.
+
+The port and whether it's on at all are optional config knobs
+(`pangolin.integration_api.port`, default `3003`; `pangolin.integration_api.enabled`,
+default unset) if you also want to hit the integration API yourself for your
+own tooling, independent of whether any `newt_agents` are configured — set
+`enabled: true` to turn it on regardless, or `false` to force it off (refused
+at config-load time if `newt_agents` are configured, since the `newt` phase
+needs it). Either way it's still only ever published loopback-only
+(`127.0.0.1:<port>`) on the Pangolin host, same as today: charmer's own
+managed Traefik config never routes it anywhere, so reaching it from off-host
+is on you (e.g. an SSH tunnel), not something this repo wires up.
 
 Pangolin CE has no way to seed an API key at deploy time so there is one
 genuinely irreducible manual step: complete `/auth/initial-setup` in a

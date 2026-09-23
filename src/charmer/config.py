@@ -98,6 +98,19 @@ class PangolinConfig:
     database: str = "postgres"
     postgres_user: str = "pangolin"
     base_domain: str | None = None
+    # Optional override of Pangolin's integration API (config.yml's
+    # `flags.enable_integration_api` / `server.integration_port`, see
+    # pangolin_api.py). None (default) keeps today's auto behavior: on, port
+    # 3003, only when newt_agents are configured. Set integration_api.enabled
+    # explicitly to turn it on independent of newt_agents (e.g. for your own
+    # external tooling against the API) or integration_api.port to use
+    # something other than 3003. Always published loopback-only
+    # (127.0.0.1:<port>) on the Pangolin host either way -- charmer never
+    # routes it through Traefik or any public interface, see README
+    # "Ingress"; exposing it beyond the host is on you (e.g. an SSH tunnel),
+    # not something charmer's managed Traefik config will do.
+    integration_api_enabled: bool | None = None
+    integration_api_port: int = 3003
 
 
 @dataclass
@@ -289,6 +302,21 @@ def load(path: str | Path) -> SiteConfig:
                 f"{type(raw_tag).__name__} {raw_tag!r}, not a version string. "
                 f"Quote it: pangolin.{tag_key}: \"{raw_tag}\"")
 
+    integration_api_enabled_raw = _get(raw, "pangolin.integration_api.enabled")
+    integration_api_enabled = (None if integration_api_enabled_raw is None
+                               else bool(integration_api_enabled_raw))
+    integration_api_port = int(_get(raw, "pangolin.integration_api.port", 3003))
+    # 3001/8091 are charmer's other loopback-only publishes on this same host
+    # (Pangolin's own API, the maintenance page; see pangolin-compose.yml.j2)
+    # -- keep this pair in sync with pangolin_phase.py's MAINTENANCE_PORT.
+    if not (1 <= integration_api_port <= 65535):
+        problems.append(f"pangolin.integration_api.port must be 1-65535, got {integration_api_port}")
+    elif integration_api_port in (3001, 8091):
+        problems.append(
+            f"pangolin.integration_api.port {integration_api_port} collides with a port charmer "
+            "already publishes loopback-only on the Pangolin host (3001 Pangolin's own API, 8091 "
+            "the maintenance page)")
+
     pangolin = PangolinConfig(
         tag=str(_get(raw, "pangolin.tag", "1.22.0")),
         gerbil_tag=str(_get(raw, "pangolin.gerbil_tag", "1.5.0")),
@@ -297,6 +325,8 @@ def load(path: str | Path) -> SiteConfig:
         database=database,
         postgres_user=_get(raw, "pangolin.postgres_user", "pangolin"),
         base_domain=base_domain,
+        integration_api_enabled=integration_api_enabled,
+        integration_api_port=integration_api_port,
     )
 
     # --- tls ---
@@ -356,6 +386,11 @@ def load(path: str | Path) -> SiteConfig:
             tun_device=a.get("tun_device", "/dev/net/tun"),
             docker_socket=bool(a.get("docker_socket", False)),
         ))
+
+    if agents and integration_api_enabled is False:
+        problems.append(
+            "pangolin.integration_api.enabled is explicitly false but newt_agents are configured: "
+            "the newt phase needs the integration API to mint their credentials")
 
     # --- maintenance page ---
     logo = _get(raw, "maintenance.logo")

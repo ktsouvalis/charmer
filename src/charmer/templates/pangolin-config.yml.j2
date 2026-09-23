@@ -18,7 +18,7 @@ server:
   # traefik-dynamic-config.yml.j2's api-service already targets.
   secret: "{{ server_secret }}"
 {% if enable_integration_api %}
-  integration_port: 3003
+  integration_port: {{ integration_port }}
 {% endif %}
   cors:
     origins:

@@ -49,7 +49,7 @@ def test_compose_pangolin_publishes_integration_api_only_when_enabled():
                       traefik_tag="v3.7.12", database="sqlite", postgres_tag="17",
                       postgres_user="pangolin", postgres_password="",
                       maintenance_tag="1.27-alpine", maintenance_port=8091,
-                      tls_enabled=True, enable_integration_api=True)
+                      tls_enabled=True, enable_integration_api=True, integration_port=3003)
     doc = yaml.safe_load(rendered)
     assert "127.0.0.1:3003:3003" in doc["services"]["pangolin"]["ports"]
 
@@ -61,6 +61,17 @@ def test_compose_pangolin_publishes_integration_api_only_when_enabled():
     doc_off = yaml.safe_load(rendered_off)
     assert "127.0.0.1:3003:3003" not in doc_off["services"]["pangolin"]["ports"]
     assert "127.0.0.1:3001:3001" in doc_off["services"]["pangolin"]["ports"]
+
+
+def test_compose_pangolin_publishes_integration_api_on_custom_port():
+    rendered = render("pangolin-compose.yml.j2", pangolin_image_tag="1.22.0", gerbil_tag="1.5.0",
+                      traefik_tag="v3.7.12", database="sqlite", postgres_tag="17",
+                      postgres_user="pangolin", postgres_password="",
+                      maintenance_tag="1.27-alpine", maintenance_port=8091,
+                      tls_enabled=True, enable_integration_api=True, integration_port=9000)
+    doc = yaml.safe_load(rendered)
+    assert "127.0.0.1:9000:9000" in doc["services"]["pangolin"]["ports"]
+    assert "127.0.0.1:3003:3003" not in doc["services"]["pangolin"]["ports"]
 
 
 def test_compose_omits_postgres_for_sqlite():
@@ -98,10 +109,20 @@ def test_pangolin_config_gerbil_port_is_always_51820():
 def test_pangolin_config_integration_api_flag():
     rendered = render("pangolin-config.yml.j2", base_url="https://p.example", dashboard_host="p.example",
                       base_domain="p.example", server_secret="s", enable_integration_api=True,
-                      database="sqlite", postgres_connection_string="", smtp_enabled=False)
+                      integration_port=3003, database="sqlite", postgres_connection_string="",
+                      smtp_enabled=False)
     doc = yaml.safe_load(rendered)
     assert doc["flags"]["enable_integration_api"] is True
     assert doc["server"]["integration_port"] == 3003
+
+
+def test_pangolin_config_integration_api_custom_port():
+    rendered = render("pangolin-config.yml.j2", base_url="https://p.example", dashboard_host="p.example",
+                      base_domain="p.example", server_secret="s", enable_integration_api=True,
+                      integration_port=9000, database="sqlite", postgres_connection_string="",
+                      smtp_enabled=False)
+    doc = yaml.safe_load(rendered)
+    assert doc["server"]["integration_port"] == 9000
 
 
 def test_pangolin_config_smtp_email_section():

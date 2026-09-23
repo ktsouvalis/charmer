@@ -167,9 +167,14 @@ class PangolinPhase(Phase):
         else:
             lines.append(f"tls: import; validate {cfg.tls.import_.get('fullchain')} on this workstation "
                          "and place it as Traefik's default certificate")
-        if cfg.newt_agents:
-            lines.append(f"enable Pangolin's integration API (loopback-only, port 3003): "
-                         f"used by the newt phase to provision {len(cfg.newt_agents)} agent(s)")
+        enable_api = cfg.pangolin.integration_api_enabled
+        if enable_api is None:
+            enable_api = bool(cfg.newt_agents)
+        if enable_api:
+            reason = (f"used by the newt phase to provision {len(cfg.newt_agents)} agent(s)"
+                      if cfg.newt_agents else "pangolin.integration_api.enabled is set")
+            lines.append(f"enable Pangolin's integration API (loopback-only, port "
+                         f"{cfg.pangolin.integration_api_port}): {reason}")
         if cfg.smtp.enabled:
             note = "" if "pangolin_smtp_pass" in ctx.state.data["generated"] else ", you will be asked once (hidden input)"
             lines.append(f"config.yml email: section ({cfg.smtp.host}:{cfg.smtp.port}, user {cfg.smtp.user}): "
@@ -187,7 +192,10 @@ class PangolinPhase(Phase):
         node = conn.name
         sec = self._secrets(ctx)
         tlsctx = self._tls_context(ctx)
-        enable_api = bool(cfg.newt_agents)
+        enable_api = cfg.pangolin.integration_api_enabled
+        if enable_api is None:
+            enable_api = bool(cfg.newt_agents)
+        integration_port = cfg.pangolin.integration_api_port
 
         dirs = f"{CONFIG_DIR}/traefik/logs {CONFIG_DIR}/letsencrypt {CERT_DIR} {MAINTENANCE_DIR}"
         if cfg.pangolin.database == "postgres":
@@ -214,11 +222,13 @@ class PangolinPhase(Phase):
                          postgres_tag=cfg.pangolin.postgres_tag, postgres_user=cfg.pangolin.postgres_user,
                          postgres_password=sec.get("postgres_password", ""),
                          maintenance_tag=MAINTENANCE_TAG, maintenance_port=MAINTENANCE_PORT,
-                         tls_enabled=tlsctx["tls_enabled"], enable_integration_api=enable_api)
+                         tls_enabled=tlsctx["tls_enabled"], enable_integration_api=enable_api,
+                         integration_port=integration_port)
         app_config = render("pangolin-config.yml.j2",
                             base_url=cfg.base_url, dashboard_host=cfg.dashboard_host,
                             base_domain=cfg.pangolin.base_domain, server_secret=sec["server_secret"],
-                            enable_integration_api=enable_api, database=cfg.pangolin.database,
+                            enable_integration_api=enable_api, integration_port=integration_port,
+                            database=cfg.pangolin.database,
                             postgres_connection_string=postgres_conn_str,
                             smtp_enabled=cfg.smtp.enabled, smtp_host=cfg.smtp.host,
                             smtp_port=cfg.smtp.port, smtp_user=cfg.smtp.user,
@@ -360,8 +370,12 @@ class PangolinPhase(Phase):
         ctx.record(node, "verify: maintenance page container running", maint_ok, r.out or r.err)
         ok = ok and maint_ok
 
-        if bool(ctx.cfg.newt_agents):
-            r = conn.run("curl -sk -o /dev/null -w '%{http_code}' http://127.0.0.1:3003/v1/")
+        enable_api = ctx.cfg.pangolin.integration_api_enabled
+        if enable_api is None:
+            enable_api = bool(ctx.cfg.newt_agents)
+        if enable_api:
+            port = ctx.cfg.pangolin.integration_api_port
+            r = conn.run(f"curl -sk -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{port}/v1/")
             api3_ok = r.out not in ("", "000")
             ctx.record(node, "verify: integration API reachable", api3_ok, f"HTTP {r.out}")
             ok = ok and api3_ok

@@ -37,6 +37,16 @@ pangolin:
                                     # Pangolin CE refuses to start without at least one
                                     # domain configured; it cannot be added later from the
                                     # dashboard before first boot
+  # integration_api:
+  #   enabled: true                 # optional: force Pangolin's integration API on, even
+  #                                  # with no newt_agents configured (e.g. for your own
+  #                                  # tooling against it). Default: auto (on only when
+  #                                  # newt_agents are configured); refused as `false` if
+  #                                  # newt_agents ARE configured, since that phase needs it.
+  #   port: 3003                    # optional: override the loopback port it's published
+  #                                  # on (127.0.0.1:<port> on the Pangolin host only --
+  #                                  # never routed through Traefik, see README "Ingress"
+  #                                  # and "Newt credential automation"). Default: 3003.
 
 # TLS is the public boundary, see README "Ingress". Traefik does all TLS/ACME
 # itself, unmodified from the official layout: this section configures

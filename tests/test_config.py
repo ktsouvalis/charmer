@@ -159,3 +159,42 @@ def test_monitor_ips_rejects_invalid_entry(tmp_path):
     path.write_text(EXAMPLE.read_text() + "\nmonitor:\n  ips:\n    - not-an-ip\n")
     with pytest.raises(ConfigError, match=r"monitor.ips\[0\]: invalid IP or CIDR"):
         load(path)
+
+
+def test_integration_api_defaults_to_auto_and_3003():
+    cfg = load(EXAMPLE)
+    assert cfg.pangolin.integration_api_enabled is None
+    assert cfg.pangolin.integration_api_port == 3003
+
+
+def test_integration_api_can_be_forced_on_with_custom_port(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    enabled: true\n    port: 9000"))
+    cfg = load(path)
+    assert cfg.pangolin.integration_api_enabled is True
+    assert cfg.pangolin.integration_api_port == 9000
+
+
+def test_integration_api_explicit_disable_conflicts_with_newt_agents(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    enabled: false"))
+    with pytest.raises(ConfigError, match="integration_api.enabled is explicitly false"):
+        load(path)
+
+
+def test_integration_api_port_out_of_range_rejected(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    port: 70000"))
+    with pytest.raises(ConfigError, match="port must be 1-65535"):
+        load(path)
+
+
+def test_integration_api_port_collision_rejected(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    port: 3001"))
+    with pytest.raises(ConfigError, match="collides with a port charmer already publishes"):
+        load(path)

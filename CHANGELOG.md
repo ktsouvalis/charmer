@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.0] - 2026-09-22
+
+- **New optional `pangolin.integration_api.enabled` / `.port`.** The
+  integration API used to be all-or-nothing: on at a hardcoded `3003`
+  whenever `newt_agents` were configured, off otherwise. Now
+  `integration_api.enabled: true` turns it on independent of `newt_agents`
+  (for your own tooling against it) and `.port` overrides `3003`; both are
+  optional and default to today's behavior (auto, `3003`), so no
+  `config_version` bump. Setting `enabled: false` while `newt_agents` are
+  configured is refused at config-load time, since the `newt` phase needs
+  the API to mint their credentials. Still always published loopback-only
+  (`127.0.0.1:<port>`) on the Pangolin host either way; charmer's own
+  Traefik config never routes it anywhere, so reaching it from off-host
+  (e.g. an SSH tunnel) is on you. See README "Newt credential automation".
+
 ## [0.7.0] - 2026-09-22
 
 - **`charmer logs` now resolves user<->resource connection history**,

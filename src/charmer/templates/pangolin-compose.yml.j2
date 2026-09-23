@@ -21,7 +21,7 @@ services:
     ports:
       - "127.0.0.1:3001:3001"
 {% if enable_integration_api %}
-      - "127.0.0.1:3003:3003"
+      - "127.0.0.1:{{ integration_port }}:{{ integration_port }}"
 {% endif %}
 {% if database == "postgres" %}
     depends_on:

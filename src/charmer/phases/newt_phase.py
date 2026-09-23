@@ -125,10 +125,12 @@ class NewtPhase(Phase):
                 ctx.record(node, "pangolin site credentials", True, "reusing previously minted credentials")
             else:
                 try:
-                    defaults = pick_site_defaults(ctx.host, root_key, org_id)
+                    port = ctx.cfg.pangolin.integration_api_port
+                    defaults = pick_site_defaults(ctx.host, root_key, org_id, port=port)
                     newt_id = defaults["newtId"]
                     newt_secret = defaults["newtSecret"]
-                    site = create_newt_site(ctx.host, root_key, org_id, agent_cfg.name, newt_id, newt_secret)
+                    site = create_newt_site(ctx.host, root_key, org_id, agent_cfg.name, newt_id, newt_secret,
+                                            port=port)
                 except PangolinAPIError as exc:
                     ctx.record(node, "pangolin site created", False, str(exc))
                     raise RuntimeError(f"minting credentials for {agent_cfg.name} failed: {exc}") from exc
