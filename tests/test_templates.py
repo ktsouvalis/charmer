@@ -85,6 +85,18 @@ def test_compose_omits_postgres_for_sqlite():
     assert "depends_on" not in doc["services"]["pangolin"]
 
 
+def test_compose_postgres_unpublished_by_default_and_loopback_only_when_set():
+    kw = dict(pangolin_image_tag="postgresql-1.22.0", gerbil_tag="1.5.0", traefik_tag="v3.7.12",
+              database="postgres", postgres_tag="17", postgres_user="pangolin",
+              postgres_password="secret", maintenance_tag="1.27-alpine", maintenance_port=8091,
+              tls_enabled=True, enable_integration_api=False)
+    doc = yaml.safe_load(render("pangolin-compose.yml.j2", **kw))
+    assert "ports" not in doc["services"]["postgres"]
+
+    doc = yaml.safe_load(render("pangolin-compose.yml.j2", postgres_loopback_port=5432, **kw))
+    assert doc["services"]["postgres"]["ports"] == ["127.0.0.1:5432:5432"]
+
+
 def test_compose_maintenance_service_is_bridge_networked_on_loopback():
     rendered = render("pangolin-compose.yml.j2", pangolin_image_tag="1.22.0", gerbil_tag="1.5.0",
                       traefik_tag="v3.7.12", database="sqlite", postgres_tag="17",

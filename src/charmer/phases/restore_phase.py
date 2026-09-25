@@ -15,11 +15,27 @@ agent with no `/opt/newt` bundle yet is skipped, not an error. This is
 best-effort, not gating: an unreachable/not-yet-onboarded agent is
 recorded as a warning, since the restore itself already succeeded and
 `charmer monitor`/`logs` is where ongoing agent health belongs.
+
+After the load, every org's `utilitySubnet` (the range Pangolin hands out
+site-resource alias addresses from) is checked. Orgs created before
+Pangolin 1.13 were migrated to a /24 there (scriptsPg/1.13.0.ts), which a
+restore carries forward; 1.22 gives new orgs a /20 (`orgs.
+utility_subnet_group`). A /24 runs out ("No available subnets remaining in
+space") once enough resources exist. With `restore.utility_subnet_prefix`
+set, a narrower range is widened in place to the aligned supernet of that
+size, which keeps every existing alias valid, but only if the result
+overlaps neither any org's `subnet` nor Gerbil's network (config.yml's
+`gerbil.subnet_group`, Pangolin's default since charmer doesn't set it,
+plus every `exitNodes.address`). Otherwise it's left alone with a warning.
+The just-loaded dump is the pre-change backup. Clients only pick up the
+wider route when they reconnect.
 """
 
 from __future__ import annotations
 
 import hashlib
+import ipaddress
+import shlex
 import time
 from pathlib import Path
 
@@ -27,6 +43,36 @@ from ..remote import wait_for
 from .base import Phase, PhaseContext, verify_public_reachable
 
 DUMP_STAGING = "/tmp/charmer-restore.sql.gz"
+
+# Pangolin 1.22's own defaults (server/lib/readConfigFile.ts): the
+# utilitySubnet new orgs get, and gerbil.subnet_group, which charmer's
+# config.yml never overrides (see pangolin-config.yml.j2).
+PANGOLIN_DEFAULT_UTILITY_PREFIX = 20
+PANGOLIN_DEFAULT_GERBIL_SUBNET_GROUP = "100.89.137.0/20"
+
+
+def widen_utility_subnet(current: str, prefix: int, org_subnets: list[str],
+                         gerbil_nets: list[str]) -> tuple[str | None, str]:
+    """Return (new CIDR or None, reason). None means leave `current` as is:
+    already at least that wide, unparseable, or the widened block would
+    overlap an org subnet / Gerbil's network. Pure, so it's unit-tested
+    without a host."""
+    try:
+        cur = ipaddress.ip_network(current, strict=False)
+    except ValueError:
+        return None, f"unparseable utilitySubnet {current!r}, left alone"
+    if cur.prefixlen <= prefix:
+        return None, f"{cur} is already /{cur.prefixlen}, at least /{prefix}"
+    new = cur.supernet(new_prefix=prefix)
+    for label, nets in (("org subnet", org_subnets), ("Gerbil network", gerbil_nets)):
+        for n in nets:
+            try:
+                other = ipaddress.ip_network(n, strict=False)
+            except ValueError:
+                continue
+            if other.version == new.version and new.overlaps(other):
+                return None, f"widening {cur} to {new} would overlap {label} {other}, left alone"
+    return str(new), f"{cur} -> {new}"
 
 
 def _wait_stable(conn, service: str, ctx: PhaseContext, seconds: int = 5) -> bool:
@@ -71,6 +117,17 @@ class RestorePhase(Phase):
             "stop pangolin/gerbil/traefik first (Postgres stays up so it can be loaded into)",
             "upload, sha256-verify, load with ON_ERROR_STOP, delete the dump from the host",
             "reconcile this host's gerbil identity (publicKey/reachableAt) back onto the restored exitNodes row",
+        ]
+        target = ctx.cfg.restore_utility_subnet_prefix
+        if target is None:
+            lines.append(f"check every org's utilitySubnet and warn if narrower than Pangolin's "
+                         f"/{PANGOLIN_DEFAULT_UTILITY_PREFIX} default (restore.utility_subnet_prefix unset: "
+                         "nothing is changed)")
+        else:
+            lines.append(f"widen any org's utilitySubnet narrower than /{target} to the aligned /{target} "
+                         "containing it (existing aliases stay valid), only if that overlaps neither an "
+                         "org subnet nor Gerbil's network; otherwise leave it and warn")
+        lines += [
             "restart the stack and health-gate before declaring the phase done",
         ]
         if ctx.cfg.newt_agents:
@@ -156,6 +213,8 @@ class RestorePhase(Phase):
                 raise RuntimeError("failed to reconcile exitNodes identity after restore: "
                                    "gerbil will crash-loop on a foreign key; fix manually and --replay restore")
 
+        self._utility_subnets(ctx, conn, psql)
+
         ctx.begin(node, "restarting pangolin")
         r = conn.run("cd /opt/pangolin && docker compose up -d --no-deps pangolin", timeout=120, sudo=True)
         ctx.record(node, "pangolin starting", r.ok, r.err if not r.ok else "")
@@ -202,6 +261,53 @@ class RestorePhase(Phase):
         ctx.state.data["generated"]["restore_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         ctx.state.save()
         ctx.restore_ran = True
+
+    def _utility_subnets(self, ctx: PhaseContext, conn, psql: str) -> None:
+        """Check (and, with restore.utility_subnet_prefix, widen) every
+        restored org's utilitySubnet; see the module docstring. Runs while
+        pangolin is still stopped, so nothing allocates from the old range
+        mid-change. Never fails the phase: the restore itself succeeded."""
+        node = conn.name
+        target = ctx.cfg.restore_utility_subnet_prefix
+        r = conn.run(f"{psql} -tA -F '|' -c " + shlex.quote(
+            'select "orgId", coalesce("subnet", \'\'), coalesce("utilitySubnet", \'\') '
+            'from orgs order by "orgId"'))
+        if not r.ok:
+            ctx.record(node, "utilitySubnet check", False, r.err or "query failed", warn=True)
+            return
+        orgs = [line.split("|") for line in r.out.splitlines() if line.count("|") == 2]
+        org_subnets = [o[1] for o in orgs if o[1]]
+        g = conn.run(f"{psql} -tAc " + shlex.quote('select "address" from "exitNodes"'))
+        gerbil_nets = [PANGOLIN_DEFAULT_GERBIL_SUBNET_GROUP] + (
+            [a for a in g.out.split() if a] if g.ok else [])
+
+        for org_id, _subnet, utility in orgs:
+            label = f"org {org_id}: utilitySubnet"
+            if not utility:
+                ctx.record(node, label, True, "not set, left alone")
+                continue
+            if target is None:
+                try:
+                    narrow = ipaddress.ip_network(utility, strict=False).prefixlen > PANGOLIN_DEFAULT_UTILITY_PREFIX
+                except ValueError:
+                    narrow = False
+                detail = utility + (f", narrower than Pangolin's /{PANGOLIN_DEFAULT_UTILITY_PREFIX} "
+                                    "default for new orgs; set restore.utility_subnet_prefix to widen it "
+                                    "on the next restore" if narrow else "")
+                ctx.record(node, label, not narrow, detail, warn=narrow)
+                continue
+            new, reason = widen_utility_subnet(utility, target, org_subnets, gerbil_nets)
+            if new is None:
+                blocked = "overlap" in reason or "unparseable" in reason
+                ctx.record(node, label, not blocked, reason, warn=blocked)
+                continue
+            lit = lambda v: "'" + v.replace("'", "''") + "'"  # noqa: E731
+            sql = (f'update orgs set "utilitySubnet" = {lit(new)} '
+                   f'where "orgId" = {lit(org_id)} and "utilitySubnet" = {lit(utility)}')
+            upd = conn.run(f"{psql} -v ON_ERROR_STOP=1 -c " + shlex.quote(sql), sudo=True)
+            ctx.record(node, f"{label} widened", upd.ok,
+                       f"{reason}; clients pick up the wider route on reconnect" if upd.ok else upd.err,
+                       warn=not upd.ok)
 
     def _redial_newt(self, ctx: PhaseContext, agent_conn) -> None:
         """Restart `agent_conn`'s existing newt container so it redials the

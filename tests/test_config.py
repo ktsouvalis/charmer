@@ -198,3 +198,57 @@ def test_integration_api_port_collision_rejected(tmp_path):
         "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    port: 3001"))
     with pytest.raises(ConfigError, match="collides with a port charmer already publishes"):
         load(path)
+
+
+def test_postgres_loopback_port_off_by_default():
+    assert load(EXAMPLE).pangolin.postgres_loopback_port is None
+
+
+def test_postgres_loopback_port_accepted(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "base_domain: uop.gr", "base_domain: uop.gr\n  postgres_loopback_port: 5432"))
+    assert load(path).pangolin.postgres_loopback_port == 5432
+
+
+@pytest.mark.parametrize("value, match", [
+    ("70000", "must be 1-65535"),
+    ('"5432"', "must be a port number"),
+    ("3001", "collides with a port charmer already publishes"),
+    ("3003", "collides with a port charmer already publishes"),
+])
+def test_postgres_loopback_port_rejected(tmp_path, value, match):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "base_domain: uop.gr", f"base_domain: uop.gr\n  postgres_loopback_port: {value}"))
+    with pytest.raises(ConfigError, match=match):
+        load(path)
+
+
+def test_postgres_loopback_port_requires_postgres(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "database: postgres", "database: sqlite").replace(
+        "base_domain: uop.gr", "base_domain: uop.gr\n  postgres_loopback_port: 5432"))
+    with pytest.raises(ConfigError, match="database is not postgres"):
+        load(path)
+
+
+def test_restore_utility_subnet_prefix_off_by_default():
+    assert load(EXAMPLE).restore_utility_subnet_prefix is None
+
+
+def test_restore_utility_subnet_prefix_accepted(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "  destructive: false", "  destructive: false\n  utility_subnet_prefix: 21", 1))
+    assert load(path).restore_utility_subnet_prefix == 21
+
+
+@pytest.mark.parametrize("value", ["8", "30", '"20"', "true"])
+def test_restore_utility_subnet_prefix_rejected(tmp_path, value):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "  destructive: false", f"  destructive: false\n  utility_subnet_prefix: {value}", 1))
+    with pytest.raises(ConfigError, match="utility_subnet_prefix must be"):
+        load(path)

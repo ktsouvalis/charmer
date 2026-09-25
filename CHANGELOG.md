@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.10.0] - 2026-09-25
+
+- **New optional `pangolin.postgres_loopback_port`.** Publishes the postgres
+  container as `127.0.0.1:<port>:5432` on the Pangolin host, for host-side
+  tools that need a TCP port (e.g. a GUI client over `ssh -L`). Off by
+  default, so the official never-published layout is unchanged; optional,
+  so no `config_version` bump. `charmer init` explains it and asks.
+  Loopback-only by construction (no knob for a wider bind); refused
+  without `database: postgres` or on 3001/8091/the integration API port.
+  `preflight` now checks that port is free on the Pangolin host when it's
+  set (a host-level Postgres on 5432 would otherwise only fail at `docker
+  compose up`), and `pangolin`'s `verify()` fails if anything listens on it
+  beyond loopback. A publish added by hand to
+  `/opt/pangolin/docker-compose.yml` is overwritten the next time the
+  `pangolin` phase runs; set this key instead.
+- **`restore` now checks every org's `utilitySubnet`, and can widen it.**
+  Orgs from before Pangolin 1.13 were migrated to a `/24`, which a restore
+  carries forward and which runs out ("No available subnets remaining in
+  space"); 1.22 gives new orgs a `/20`, so fresh installs aren't affected.
+  After the load, a range narrower than `/20` is a warning. With the new
+  optional `restore.utility_subnet_prefix` it's widened in place (pangolin
+  still stopped) to the aligned supernet of that size, keeping existing
+  aliases valid, but only if that overlaps neither an org `subnet` nor
+  Gerbil's network (default `gerbil.subnet_group` plus `exitNodes.address`);
+  otherwise it's left alone with a warning. Never narrows, never fails the
+  phase. Clients get the wider route on reconnect.
+
 ## [0.9.0] - 2026-09-23
 
 Fixes for what `base`/`preflight` would have gotten wrong on Proxmox

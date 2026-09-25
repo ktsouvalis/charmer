@@ -36,11 +36,13 @@ class PreflightPhase(Phase):
 
     def plan(self, ctx: PhaseContext) -> list[str]:
         cfg = ctx.cfg
+        pg_port = cfg.pangolin.postgres_loopback_port
+        pg_note = f" + {pg_port} (Postgres, loopback publish)" if pg_port else ""
         lines = [
             f"SSH to the Pangolin host ({cfg.host_ip}) as {cfg.ssh.user!r} (auth: {cfg.ssh.auth}) "
             "and run read-only checks: reachability + sudo, OS release, free disk, required ports",
             f"required TCP ports free: {', '.join(map(str, REQUIRED_FREE_TCP_PORTS))} "
-            f"(Gerbil/Traefik) / UDP: {', '.join(map(str, REQUIRED_FREE_UDP_PORTS))} (Gerbil/WireGuard)",
+            f"(Gerbil/Traefik){pg_note} / UDP: {', '.join(map(str, REQUIRED_FREE_UDP_PORTS))} (Gerbil/WireGuard)",
         ]
         if cfg.refuse_existing:
             lines.append("REFUSE the host if it already carries pangolin/gerbil/traefik/postgres containers")
@@ -70,6 +72,8 @@ class PreflightPhase(Phase):
         for p in done:
             expected_tcp |= PHASE_TCP_PORTS.get(p, set())
             expected_udp |= PHASE_UDP_PORTS.get(p, set())
+        if "pangolin" in done and cfg.pangolin.postgres_loopback_port:
+            expected_tcp.add(cfg.pangolin.postgres_loopback_port)
 
         host = ctx.host
         self._check_host(ctx, host, cfg, done, midlife, expected_tcp, expected_udp)
@@ -117,8 +121,11 @@ class PreflightPhase(Phase):
                 listening_tcp.add(int(addr.rsplit(":", 1)[-1]))
             except ValueError:
                 pass
-        occupied = sorted((set(REQUIRED_FREE_TCP_PORTS) & listening_tcp) - expected_tcp)
-        owned = sorted(set(REQUIRED_FREE_TCP_PORTS) & listening_tcp & expected_tcp)
+        required_tcp = set(REQUIRED_FREE_TCP_PORTS)
+        if cfg.pangolin.postgres_loopback_port:
+            required_tcp.add(cfg.pangolin.postgres_loopback_port)
+        occupied = sorted((required_tcp & listening_tcp) - expected_tcp)
+        owned = sorted(required_tcp & listening_tcp & expected_tcp)
         detail = f"occupied: {occupied}" if occupied else "all free"
         if owned:
             detail += f" (ignoring {owned}, owned by completed phases)"

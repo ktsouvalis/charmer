@@ -41,7 +41,10 @@ CONFIG_SCHEMA_VERSION = 1
 # (SSH excluded; preflight checks that separately). 80/443 are Gerbil's own
 # public listeners (wildcard-published, Traefik riding along via
 # network_mode: service:gerbil; see pangolin-compose.yml.j2 and README
-# "Ingress"). Pangolin/Postgres never leave the compose network at all.
+# "Ingress"). Pangolin/Postgres never leave the compose network at all,
+# except for charmer's own loopback-only publishes (pangolin-compose.yml.j2);
+# of those, only the optional pangolin.postgres_loopback_port is checked by
+# preflight, since it's the one likely to clash with a host-level Postgres.
 REQUIRED_FREE_TCP_PORTS = [80, 443]
 # Gerbil's WireGuard ports, host-published wildcard, exactly as the
 # official compose does it. See README "Ingress".
@@ -111,6 +114,12 @@ class PangolinConfig:
     # not something charmer's managed Traefik config will do.
     integration_api_enabled: bool | None = None
     integration_api_port: int = 3003
+    # Optional loopback-only host publish of the postgres container
+    # (`127.0.0.1:<port>:5432`), for host-side tooling that can't just
+    # `docker exec postgres psql` (e.g. a GUI client over `ssh -L`). None
+    # (default) keeps the official layout's never-published postgres. Never
+    # anything but 127.0.0.1: charmer has no knob for a wildcard publish.
+    postgres_loopback_port: int | None = None
 
 
 @dataclass
@@ -159,6 +168,9 @@ class SiteConfig:
     newt_agents: list[NewtAgent]
     restore_dump: str | None
     restore_destructive: bool
+    # Optional: after a restore, widen any org's utilitySubnet narrower than
+    # this prefix (see restore_phase.py). None = check and warn only.
+    restore_utility_subnet_prefix: int | None
     monitor_ips: list[str]
     unattended_upgrades: bool
     raw: dict[str, Any] = field(default_factory=dict)
@@ -317,6 +329,24 @@ def load(path: str | Path) -> SiteConfig:
             "already publishes loopback-only on the Pangolin host (3001 Pangolin's own API, 8091 "
             "the maintenance page)")
 
+    postgres_loopback_port_raw = _get(raw, "pangolin.postgres_loopback_port")
+    postgres_loopback_port: int | None = None
+    if postgres_loopback_port_raw is not None:
+        if isinstance(postgres_loopback_port_raw, bool) or not isinstance(postgres_loopback_port_raw, int):
+            problems.append(f"pangolin.postgres_loopback_port must be a port number (or null), "
+                            f"got {postgres_loopback_port_raw!r}")
+        elif not (1 <= postgres_loopback_port_raw <= 65535):
+            problems.append(f"pangolin.postgres_loopback_port must be 1-65535, got {postgres_loopback_port_raw}")
+        elif database != "postgres":
+            problems.append("pangolin.postgres_loopback_port is set but pangolin.database is not postgres")
+        elif postgres_loopback_port_raw in (3001, 8091, integration_api_port):
+            problems.append(
+                f"pangolin.postgres_loopback_port {postgres_loopback_port_raw} collides with a port "
+                "charmer already publishes loopback-only on the Pangolin host (3001 Pangolin's own "
+                f"API, 8091 the maintenance page, {integration_api_port} the integration API)")
+        else:
+            postgres_loopback_port = postgres_loopback_port_raw
+
     pangolin = PangolinConfig(
         tag=str(_get(raw, "pangolin.tag", "1.22.0")),
         gerbil_tag=str(_get(raw, "pangolin.gerbil_tag", "1.5.0")),
@@ -327,6 +357,7 @@ def load(path: str | Path) -> SiteConfig:
         base_domain=base_domain,
         integration_api_enabled=integration_api_enabled,
         integration_api_port=integration_api_port,
+        postgres_loopback_port=postgres_loopback_port,
     )
 
     # --- tls ---
@@ -430,6 +461,16 @@ def load(path: str | Path) -> SiteConfig:
     if restore_dump and not str(restore_dump).endswith(".sql.gz"):
         problems.append("restore.postgres_dump must be a .sql.gz PostgreSQL dump")
 
+    utility_prefix_raw = _get(raw, "restore.utility_subnet_prefix")
+    restore_utility_subnet_prefix: int | None = None
+    if utility_prefix_raw is not None:
+        if (isinstance(utility_prefix_raw, bool) or not isinstance(utility_prefix_raw, int)
+                or not (16 <= utility_prefix_raw <= 29)):
+            problems.append(f"restore.utility_subnet_prefix must be an integer prefix length 16-29, "
+                            f"got {utility_prefix_raw!r}")
+        else:
+            restore_utility_subnet_prefix = utility_prefix_raw
+
     # --- monitor (optional) ---
     # Admin/monitoring source IPs the `base` phase scopes ssh to, on both the
     # Pangolin host and every Newt agent, instead of leaving it open to
@@ -479,6 +520,7 @@ def load(path: str | Path) -> SiteConfig:
         newt_agents=agents,
         restore_dump=restore_dump,
         restore_destructive=bool(_get(raw, "restore.destructive", False)),
+        restore_utility_subnet_prefix=restore_utility_subnet_prefix,
         monitor_ips=monitor_ips,
         unattended_upgrades=unattended_upgrades,
         raw=raw,

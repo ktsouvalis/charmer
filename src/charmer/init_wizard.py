@@ -117,6 +117,18 @@ def run_wizard(output: str | None = None) -> Path:
         base_domain = _ask("Base domain for published resources (required: Pangolin CE "
                            "refuses to start without at least one domain configured)")
 
+    postgres_loopback_port = None
+    if database == "postgres":
+        print("  Postgres is never published to the host by default: pangolin reaches it over the "
+              "compose network, and `docker exec postgres psql` works on the host without it. "
+              "Publishing it on 127.0.0.1 only (never off-host) is useful for tools that need a TCP "
+              "port, e.g. a GUI client over `ssh -L`.")
+        if _ask_yn("  Publish Postgres on 127.0.0.1 of the Pangolin host", default=False):
+            port = _ask("  Loopback port", "5432")
+            while not (port.isdigit() and 1 <= int(port) <= 65535 and int(port) not in (3001, 3003, 8091)):
+                port = _ask("  Loopback port (1-65535, not 3001/3003/8091)", "5432")
+            postgres_loopback_port = int(port)
+
     print("\n-- Maintenance page ('we'll be back', shown on the dashboard host during `charmer shutdown`) --")
     org_name = _ask("Organization name (Enter to skip)")
     maintenance_message = (f"{org_name}, θα επιστρέψουμε σε λίγο." if org_name
@@ -166,6 +178,7 @@ def run_wizard(output: str | None = None) -> Path:
             "host": {"ip": host_ip},
             "tag": "1.22.0", "gerbil_tag": "1.5.0", "traefik_tag": "v3.7.12", "postgres_tag": "17",
             "database": database, "postgres_user": "pangolin", "base_domain": base_domain,
+            **({"postgres_loopback_port": postgres_loopback_port} if postgres_loopback_port else {}),
         },
         "tls": tls,
         "maintenance": {"logo": None, "message": maintenance_message},

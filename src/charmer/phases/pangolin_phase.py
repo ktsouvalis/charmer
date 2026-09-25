@@ -152,8 +152,14 @@ class PangolinPhase(Phase):
         ]
         if cfg.pangolin.database == "postgres":
             lines.append("Postgres password: generated once, pinned in state, never printed")
-            lines.append("Postgres runs as a plain container on the compose bridge network, "
-                         "never published to the host, reachable only from pangolin as `postgres:5432`")
+            pg_port = cfg.pangolin.postgres_loopback_port
+            if pg_port:
+                lines.append("Postgres runs as a plain container on the compose bridge network, reachable "
+                             f"from pangolin as `postgres:5432`, and published loopback-only on the host "
+                             f"as 127.0.0.1:{pg_port} (pangolin.postgres_loopback_port), never off-host")
+            else:
+                lines.append("Postgres runs as a plain container on the compose bridge network, "
+                             "never published to the host, reachable only from pangolin as `postgres:5432`")
         else:
             lines.append("SQLite (lab only); no Postgres container")
         provider = cfg.tls.provider
@@ -223,7 +229,8 @@ class PangolinPhase(Phase):
                          postgres_password=sec.get("postgres_password", ""),
                          maintenance_tag=MAINTENANCE_TAG, maintenance_port=MAINTENANCE_PORT,
                          tls_enabled=tlsctx["tls_enabled"], enable_integration_api=enable_api,
-                         integration_port=integration_port)
+                         integration_port=integration_port,
+                         postgres_loopback_port=cfg.pangolin.postgres_loopback_port)
         app_config = render("pangolin-config.yml.j2",
                             base_url=cfg.base_url, dashboard_host=cfg.dashboard_host,
                             base_domain=cfg.pangolin.base_domain, server_secret=sec["server_secret"],
@@ -379,6 +386,17 @@ class PangolinPhase(Phase):
             api3_ok = r.out not in ("", "000")
             ctx.record(node, "verify: integration API reachable", api3_ok, f"HTTP {r.out}")
             ok = ok and api3_ok
+
+        pg_port = ctx.cfg.pangolin.postgres_loopback_port
+        if pg_port:
+            # Every listener on that port must be loopback: catches a
+            # hand-edited compose (or anything else) exposing it wider.
+            r = conn.run(f"ss -Htln 'sport = :{pg_port}' | awk '{{print $4}}'")
+            addrs = [a for a in r.out.split() if a]
+            pg_ok = bool(addrs) and all(a.startswith(("127.", "[::1]")) for a in addrs)
+            ctx.record(node, f"verify: postgres published loopback-only on {pg_port}", pg_ok,
+                       ", ".join(addrs) if addrs else "nothing listening")
+            ok = ok and pg_ok
 
         # End-to-end over the actual public interface (Gerbil's wildcard
         # 80/443 publish, Traefik riding along via network_mode:

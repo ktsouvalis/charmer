@@ -354,9 +354,15 @@ lays it out, plus `config.yml`. See [Ingress](#ingress) below for why
 there's no reverse proxy or passthrough layer in front of any of this.
 `server.secret` and the Postgres password are generated once and pinned in
 state. Postgres, when used, is a plain
-container on the compose bridge network, never published to the host at
-all: reachable only from pangolin as `postgres:5432`. SQLite is accepted
-for `lab` only (`config.py` refuses it in production).
+container on the compose bridge network, never published to the host by
+default: reachable only from pangolin as `postgres:5432`. Setting
+`pangolin.postgres_loopback_port` (asked by `charmer init`) additionally
+publishes it as `127.0.0.1:<port>` on the Pangolin host, for tools that
+need a TCP port (e.g. a GUI client over `ssh -L`); `docker exec postgres
+psql` works without it. It's loopback-only by construction: there's no
+knob for a wider bind, `preflight` checks the port is free, and this
+phase's `verify()` fails if anything listens on it beyond loopback. SQLite
+is accepted for `lab` only (`config.py` refuses it in production).
 
 Charmer's own SSH-based tooling (this phase's `verify()`, and the `newt`
 phase's calls into the integration API: see
@@ -454,6 +460,23 @@ before the load and patching them back onto that same `exitNodeId` row
 afterward, keyed on the primary key, not `publicKey`, which is exactly
 what Pangolin's own logic can't do. Everything else on that row (address,
 name) comes from the dump untouched. See `phases/restore_phase.py`.
+
+**Org `utilitySubnet` after a restore.** Each org's `utilitySubnet` is the
+range Pangolin hands out site-resource alias addresses from. Orgs created
+before Pangolin 1.13 were migrated to a `/24` there, and a restore carries
+that forward; 1.22 gives new orgs a `/20`. A `/24` eventually fails with
+"No available subnets remaining in space". After the load, `restore`
+reads every org's `utilitySubnet` and warns if one is narrower than `/20`.
+With `restore.utility_subnet_prefix` set (e.g. `22`), it instead widens it
+in place, while pangolin is still stopped, to the aligned block of that
+size containing the current one, so every existing alias stays valid. It
+does this only if the widened block overlaps neither any org's `subnet` nor
+Gerbil's network (Pangolin's default `gerbil.subnet_group`, which charmer
+never overrides, plus every `exitNodes.address`); otherwise it leaves the
+value alone with a warning. It never narrows, and the dump just loaded is
+the backup. Clients only get the wider route after they reconnect, and
+anything real on your network inside the new range becomes unreachable for
+connected clients (it's CGNAT space, so unlikely, but check).
 
 **Migrating an existing (non-charmer) Pangolin deployment onto a fresh
 charmer-provisioned host:** `server.secret` is what Pangolin uses to

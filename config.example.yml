@@ -37,6 +37,11 @@ pangolin:
                                     # Pangolin CE refuses to start without at least one
                                     # domain configured; it cannot be added later from the
                                     # dashboard before first boot
+  # postgres_loopback_port: 5432   # optional: also publish the postgres container on
+  #                                  # 127.0.0.1:<port> of the Pangolin host (never off-host),
+  #                                  # for tools that need a TCP port, e.g. a GUI client over
+  #                                  # `ssh -L`. `docker exec postgres psql` works without it.
+  #                                  # Default: not published at all (official layout).
   # integration_api:
   #   enabled: true                 # optional: force Pangolin's integration API on, even
   #                                  # with no newt_agents configured (e.g. for your own
@@ -121,6 +126,13 @@ newt_agents:
 restore:
   postgres_dump: null              # e.g. ./backups/pangolin.sql.gz, PostgreSQL only
   destructive: false                # must be true to allow restore to run at all
+  # utility_subnet_prefix: 20       # optional: after loading, widen any org's utilitySubnet
+  #                                  # (the range site-resource aliases come from) narrower than
+  #                                  # this to the aligned block of this size that contains it, so
+  #                                  # existing aliases stay valid. Skipped with a warning if the
+  #                                  # result would overlap an org subnet or Gerbil's network.
+  #                                  # Orgs from before Pangolin 1.13 carry a /24; 1.22 gives new
+  #                                  # orgs a /20. Unset: check and warn only, nothing changed.
 
 # Optional. Scopes ssh on the Pangolin host AND every Newt agent to this
 # allow-list instead of leaving it open to anywhere (today's default when
