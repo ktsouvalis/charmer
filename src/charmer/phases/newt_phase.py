@@ -11,34 +11,37 @@ The Pangolin Root API Key and organization ID are the one irreducible
 manual step (see pangolin_api.py's module docstring and README "Newt
 credential automation"): prompted once, hidden, pinned in state, never
 written to the config file, same treatment as any other secret charmer
-handles.
+handles. They're asked for only when an agent actually needs a new site.
+
+Credentials already pinned (minted earlier, or adopted by adopt_newt) are
+checked against Pangolin first (get-token, newt_ops.check_credentials()):
+after a restore they may belong to a database that's gone. A rejected
+pair, or an unpinned agent right after a restore (whose dump may already
+hold a site for it), is only (re)minted after a y/N; declining skips that
+agent. An adopted agent's old connector container is removed just before
+charmer's bundle starts, so two connectors never run with one identity.
 """
 
 from __future__ import annotations
 
 import getpass
+import time
 
+from ..init_wizard import _ask_yn
 from ..pangolin_api import PangolinAPIError, create_newt_site, pick_site_defaults
 from ..remote import push_file, read_pangolin_setup_token, render, wait_for
 from .base import Phase, PhaseContext, console
+from .newt_ops import NEWT_DIR, check_credentials
 
 
 class NewtPhase(Phase):
     name = "newt"
 
+    def __init__(self):
+        self._skipped: set[str] = set()
+
     def enabled(self, ctx: PhaseContext) -> bool:
-        if not ctx.cfg.newt_agents:
-            return False
-        if ctx.restore_ran:
-            console.print(
-                "[yellow]skipping newt: the restore phase just replaced Postgres with a dump that "
-                "may already contain sites for these agents. Check Server Admin -> Sites on the "
-                "dashboard: for any agent that genuinely needs a fresh site, clear its "
-                "newt_id_<agent>/newt_secret_<agent> from state and run "
-                "`charmer provision <config> --only newt`.[/yellow]"
-            )
-            return False
-        return True
+        return bool(ctx.cfg.newt_agents)
 
     # ------------------------------------------------------------------ util
     def _root_key(self, ctx: PhaseContext) -> str:
@@ -64,16 +67,28 @@ class NewtPhase(Phase):
     # ------------------------------------------------------------------ plan
     def plan(self, ctx: PhaseContext) -> list[str]:
         agents = ctx.cfg.newt_agents
+        g = ctx.state.data["generated"]
+        unpinned = [a.name for a in agents if f"newt_id_{a.name}" not in g]
         lines = [
-            f"mint Pangolin site credentials for {len(agents)} agent(s) via the integration API "
-            "(loopback-only on the Pangolin host, see pangolin_api.py); credentials already "
-            "pinned in state from a previous run are reused, never re-minted",
+            "credentials already pinned in state (minted earlier, or adopted by adopt_newt) are "
+            "checked against Pangolin and reused, never re-minted; a rejected pair is re-minted "
+            "only if you say so",
         ]
-        if "pangolin_root_api_key" not in ctx.state.data["generated"]:
-            lines.append("Root API key not yet pinned: you will be asked once (hidden input); "
-                        "needs at least the 'Create Site' permission")
-        if "pangolin_org_id" not in ctx.state.data["generated"]:
-            lines.append("organization ID not yet pinned: you will be asked once")
+        if unpinned:
+            lines.append(f"mint Pangolin site credentials for {', '.join(unpinned)} via the integration "
+                         "API (loopback-only on the Pangolin host, see pangolin_api.py)"
+                         + ("; a restore just ran, so you'll be asked per agent first (its dump may "
+                            "already have a site for it)" if ctx.restore_ran else ""))
+            if "pangolin_root_api_key" not in g:
+                lines.append("Root API key not yet pinned: you will be asked once, only if a site gets "
+                             "minted (hidden input); needs at least the 'Create Site' permission")
+            if "pangolin_org_id" not in g:
+                lines.append("organization ID not yet pinned: you will be asked once, only if a site "
+                             "gets minted")
+        for name, info in ctx.state.data.get("adopted", {}).items():
+            if not info.get("retired") and any(a.name == name for a in agents):
+                lines.append(f"{name}: remove the adopted connector container {info['container_name']} "
+                             "just before charmer's bundle starts (same credentials, one connector)")
         if ctx.cfg.tls.provider == "self_signed":
             lines.append("tls: self_signed; every agent gets SKIP_TLS_VERIFY=true, since fosrl/newt's "
                         "TLS_CLIENT_CAS only takes effect alongside a client cert/key (mTLS), not "
@@ -109,41 +124,43 @@ class NewtPhase(Phase):
 
     # ----------------------------------------------------------------- apply
     def apply(self, ctx: PhaseContext) -> None:
-        self._announce_prereqs(ctx)
-        root_key = self._root_key(ctx)  # may prompt, before any agent is touched
-        org_id = self._org_id(ctx)
+        self._skipped = set()
         skip_tls_verify = ctx.cfg.tls.provider == "self_signed"
+        g = ctx.state.data["generated"]
 
         for agent_cfg, conn in zip(ctx.cfg.newt_agents, ctx.agents):
             node = conn.name
             id_key = f"newt_id_{agent_cfg.name}"
             secret_key = f"newt_secret_{agent_cfg.name}"
 
-            if id_key in ctx.state.data["generated"]:
-                newt_id = ctx.state.data["generated"][id_key]
-                newt_secret = ctx.state.data["generated"][secret_key]
-                ctx.record(node, "pangolin site credentials", True, "reusing previously minted credentials")
+            ask_first = ""
+            if id_key in g:
+                accepted = check_credentials(ctx, g[id_key], g[secret_key])
+                if accepted is False:
+                    ask_first = (f"Pangolin rejects the credentials pinned for {agent_cfg.name} (its site "
+                                 "was deleted, or a restore replaced the database)")
+                else:
+                    ctx.record(node, "pangolin site credentials", True, "reusing pinned credentials"
+                               + ("" if accepted else " (couldn't check them: pangolin didn't answer)"))
+            elif ctx.restore_ran:
+                ask_first = (f"no credentials pinned for {agent_cfg.name}, and the restored database may "
+                             "already have a site for it (adopt_newt takes over a running connector)")
+            if ask_first and not _ask_yn(f"{ask_first}. Mint a NEW Pangolin site for it", default=False):
+                ctx.record(node, "pangolin site credentials", False,
+                           f"{ask_first}; not minted, agent skipped", warn=True)
+                self._skipped.add(node)
+                continue
+            if ask_first or id_key not in g:
+                newt_id, newt_secret = self._mint(ctx, agent_cfg.name, node)
             else:
-                try:
-                    port = ctx.cfg.pangolin.integration_api_port
-                    defaults = pick_site_defaults(ctx.host, root_key, org_id, port=port)
-                    newt_id = defaults["newtId"]
-                    newt_secret = defaults["newtSecret"]
-                    site = create_newt_site(ctx.host, root_key, org_id, agent_cfg.name, newt_id, newt_secret,
-                                            port=port)
-                except PangolinAPIError as exc:
-                    ctx.record(node, "pangolin site created", False, str(exc))
-                    raise RuntimeError(f"minting credentials for {agent_cfg.name} failed: {exc}") from exc
-                ctx.state.data["generated"][id_key] = newt_id
-                ctx.state.data["generated"][secret_key] = newt_secret
-                ctx.state.save()
-                ctx.record(node, "pangolin site created", True, f"site id {site.get('siteId', '?')}")
+                newt_id, newt_secret = g[id_key], g[secret_key]
 
             compose = self._render(agent_cfg, ctx.cfg.base_url, newt_id, newt_secret, skip_tls_verify)
-            conn.run("mkdir -p /opt/newt", sudo=True)
-            changed = push_file(conn, compose, "/opt/newt/docker-compose.yml", mode="0600")
+            conn.run(f"mkdir -p {NEWT_DIR}", sudo=True)
+            changed = push_file(conn, compose, f"{NEWT_DIR}/docker-compose.yml", mode="0600")
+            self._retire_adopted(ctx, agent_cfg.name, conn)
 
-            running = conn.run("cd /opt/newt && docker compose ps --status running --format '{{.Name}}'").out
+            running = conn.run(f"cd {NEWT_DIR} && docker compose ps --status running --format '{{{{.Name}}}}'").out
             if not running or changed:
                 ctx.begin(node, "docker compose up")
                 r = conn.run("cd /opt/newt && docker compose up -d", timeout=300)
@@ -159,6 +176,52 @@ class NewtPhase(Phase):
                 print(f"\n--- newt ({node}, last 40 lines) ---\n{tail}\n")
                 raise RuntimeError(f"{node}: newt container did not stay running")
 
+    def _mint(self, ctx: PhaseContext, agent_name: str, node: str) -> tuple[str, str]:
+        """Create a new Pangolin site for `agent_name`, pin and return its
+        (newtId, secret). Asks for the Root API key / org ID if unpinned."""
+        self._announce_prereqs(ctx)
+        root_key = self._root_key(ctx)
+        org_id = self._org_id(ctx)
+        try:
+            port = ctx.cfg.pangolin.integration_api_port
+            defaults = pick_site_defaults(ctx.host, root_key, org_id, port=port)
+            newt_id = defaults["newtId"]
+            newt_secret = defaults["newtSecret"]
+            site = create_newt_site(ctx.host, root_key, org_id, agent_name, newt_id, newt_secret, port=port)
+        except PangolinAPIError as exc:
+            ctx.record(node, "pangolin site created", False, str(exc))
+            raise RuntimeError(f"minting credentials for {agent_name} failed: {exc}") from exc
+        g = ctx.state.data["generated"]
+        g[f"newt_id_{agent_name}"] = newt_id
+        g[f"newt_secret_{agent_name}"] = newt_secret
+        ctx.state.data.get("adopted", {}).pop(agent_name, None)  # a new identity, nothing to retire
+        ctx.state.save()
+        ctx.record(node, "pangolin site created", True, f"site id {site.get('siteId', '?')}")
+        return newt_id, newt_secret
+
+    def _retire_adopted(self, ctx: PhaseContext, agent_name: str, conn) -> None:
+        """Remove the connector container adopt_newt took the credentials
+        from, right before charmer's bundle starts with them. Only that one
+        container: its compose project may hold other services."""
+        info = ctx.state.data.get("adopted", {}).get(agent_name)
+        if not info or info.get("retired"):
+            return
+        node = conn.name
+        if info.get("working_dir") != NEWT_DIR:
+            r = conn.run(f"docker rm -f {info['container']}", timeout=60)
+            gone = r.ok or "No such container" in r.err
+            ctx.record(node, f"adopted connector {info['container_name']} removed", gone, r.err if not gone else "")
+            if not gone:
+                raise RuntimeError(f"{node}: couldn't remove the adopted connector {info['container_name']}; "
+                                   "two connectors with the same credentials would fight over the site")
+            if info.get("working_dir"):
+                ctx.record(node, "old compose file", False,
+                           f"{info['working_dir']} still defines {info['container_name']}: remove it there, "
+                           "or a `docker compose up` in that directory brings back a second connector "
+                           "with the same credentials", warn=True)
+        info["retired"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        ctx.state.save()
+
     def _render(self, agent_cfg, pangolin_endpoint: str, newt_id: str, newt_secret: str,
                skip_tls_verify: bool) -> str:
         return render("newt-compose.yml.j2", image_tag=agent_cfg.image_tag,
@@ -170,6 +233,8 @@ class NewtPhase(Phase):
     def verify(self, ctx: PhaseContext) -> bool:
         ok = True
         for conn in ctx.agents:
+            if conn.name in self._skipped:
+                continue
             r = conn.run("cd /opt/newt && docker compose ps newt --format '{{.State}}'")
             running = r.out.strip() == "running"
             ctx.record(conn.name, "verify: newt container running", running, r.out or r.err)

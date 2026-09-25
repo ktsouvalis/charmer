@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from rich.console import Console
 
@@ -44,11 +45,12 @@ class PhaseContext:
     fleet: Fleet  # conns[0] is always the Pangolin host; conns[1:] are Newt agents, in config order
     checks: list[Check] = field(default_factory=list)
     # Set by restore_phase when it actually loads a dump (not the no-op /
-    # declined case): newt_phase reads this to skip minting fresh site
-    # credentials against data a restore just brought in. Scoped to this one
-    # `charmer provision` invocation, not persisted: a later, separate
-    # `--only newt` run is unaffected.
+    # declined case): newt_phase then asks before minting a site for an
+    # agent with nothing pinned (the dump may already have one), and
+    # adopt_newt runs. Scoped to this one `charmer provision` invocation.
     restore_ran: bool = False
+    # The config file this run loaded; adopt_newt appends adopted agents to it.
+    config_path: Path | None = None
     _status: object = field(default=None, repr=False)
     _status_text: str = field(default="", repr=False)
 

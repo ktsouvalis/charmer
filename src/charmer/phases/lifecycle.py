@@ -24,6 +24,7 @@ import shlex
 
 from ..remote import wait_for
 from .base import Phase, PhaseContext
+from .newt_ops import gerbil_bounced, gerbil_marker, redial_all
 
 MAINTENANCE_MARKER = 'name="charmer-maintenance"'
 
@@ -40,6 +41,7 @@ class ShutdownPhase(Phase):
             "it's attached to gerbil's current network namespace, regardless of history",
             "visitors to the dashboard host now see the maintenance page instead of a connection "
             "reset; resource subdomains are not covered (see README 'Ingress')",
+            "if gerbil wasn't running and gets started here, newt agents are recreated (down + up) by `charmer start`",
         ]
 
     def apply(self, ctx: PhaseContext) -> None:
@@ -50,11 +52,18 @@ class ShutdownPhase(Phase):
         # back up too and block on its healthcheck (up to ~2.5min) before
         # doing anything else: looks exactly like a hang, no progress shown.
         ctx.begin(conn.name, "ensuring gerbil/maintenance are up", "--no-deps, so pangolin stays down")
+        gerbil_before = gerbil_marker(conn)
         r = conn.run("cd /opt/pangolin && docker compose up -d --no-deps gerbil maintenance",
                      timeout=120, sudo=True)
         ctx.record(conn.name, "gerbil/maintenance up", r.ok, r.err if not r.ok else "")
         if not r.ok:
             raise RuntimeError("failed to ensure gerbil/maintenance are up")
+        # A gerbil this just (re)started strands every Newt tunnel, but a
+        # redial now is useless with pangolin about to stop: `start` does it.
+        if gerbil_bounced(gerbil_before, gerbil_marker(conn)):
+            ctx.state.data["phases"].setdefault("shutdown", {})["newt_redial_pending"] = True
+            ctx.state.save()
+            ctx.record(conn.name, "gerbil was (re)started", True, "newt agents get recreated by `charmer start`")
         # Traefik's `network_mode: service:gerbil` pins it to gerbil's
         # network namespace at container-start time, and Docker never
         # migrates that later: if gerbil was ever recreated/restarted since
@@ -105,7 +114,9 @@ class StartPhase(Phase):
 
     def plan(self, ctx: PhaseContext) -> list[str]:
         return ["start pangolin (gerbil, traefik, and the maintenance page were never stopped); "
-               "refuses unless `shutdown` last completed gracefully"]
+               "refuses unless `shutdown` last completed gracefully",
+               "if gerbil was (re)started by `shutdown` or by this: recreate newt (down + up) on every configured "
+               "agent so its tunnel redials, and list unmanaged connectors for a manual restart"]
 
     def apply(self, ctx: PhaseContext) -> None:
         if ctx.state.phase_status("shutdown") != "done":
@@ -117,11 +128,13 @@ class StartPhase(Phase):
         # `start` self-healing if any of them happened to be down too (host
         # reboot, etc.) rather than assuming shutdown's invariant always held.
         ctx.begin(conn.name, "docker compose up", "pangolin: gerbil/traefik/maintenance already running")
+        gerbil_before = gerbil_marker(conn)
         r = conn.run("cd /opt/pangolin && docker compose up -d pangolin gerbil traefik maintenance",
                      timeout=300, sudo=True)
         ctx.record(conn.name, "stack starting", r.ok, r.err if not r.ok else "")
         if not r.ok:
             raise RuntimeError("failed to start the pangolin stack")
+        gerbil_after = gerbil_marker(conn)
         ctx.begin(conn.name, "waiting for pangolin healthy")
         healthy = wait_for(conn, "cd /opt/pangolin && docker compose ps pangolin --format '{{.Health}}'",
                            expect="healthy", timeout=300, interval=5,
@@ -129,6 +142,9 @@ class StartPhase(Phase):
         ctx.record(conn.name, "pangolin healthy", healthy, "")
         if not healthy:
             raise RuntimeError("pangolin did not become healthy after starting")
+        shutdown = ctx.state.data["phases"].get("shutdown", {})
+        if shutdown.pop("newt_redial_pending", False) or gerbil_bounced(gerbil_before, gerbil_after):
+            redial_all(ctx, "gerbil was (re)started, so every Newt tunnel had to redial")
         ctx.state.mark_phase("shutdown", "reversed")
 
     def verify(self, ctx: PhaseContext) -> bool:

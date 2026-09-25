@@ -41,6 +41,7 @@ doesn't bundle, modify, or redistribute any of them.
 | base | implemented, verified |
 | pangolin | implemented, verified, official Compose layout, exercised with `acme` (staging, then real Let's Encrypt production) |
 | restore | implemented, verified, both the skipped path (no dump configured) and a real destructive restore |
+| adopt_newt | implemented, unit-tested and simulated only (new in 0.11.0); runs only after a restore |
 | newt | implemented, verified, credentials minted automatically via the Pangolin API; agent provisioned, connected, and a private resource published through it and reached from outside |
 | handoff | implemented, verified, read-only, emits the monitor config |
 
@@ -427,6 +428,34 @@ Verify: Pangolin's own API answers on loopback, (when Newt agents are
 configured) so does the integration API, and an end-to-end request over the
 actual public interface (Gerbil/Traefik) reaches Pangolin's API.
 
+#### Which restarts need the Newt agents redialed
+
+Only a **gerbil** restart strands them: each agent's WireGuard tunnel is to
+gerbil's process, and a new process means a stale tunnel. A pangolin,
+traefik, postgres or maintenance restart only drops Newt's websocket
+control channel, which Newt redials by itself every 3s (fosrl/newt
+`websocket/client.go`).
+
+| What happened | Newt redial? |
+|---|---|
+| `config.yml` changed → pangolin restarted | no |
+| postgres recreated → pangolin restarted | no |
+| Traefik config/cert changed → traefik restarted | no |
+| `gerbil_tag` changed, or gerbil crash-looping → gerbil recreated/restarted (traefik force-recreated with it) | **yes** |
+| `up -d` failed → whole-stack `--force-recreate` fallback | **yes** |
+| `restore` (always recreates gerbil) | **yes** |
+| `shutdown`/`start` had to (re)start gerbil (e.g. after a host reboot) | **yes**, done by `start` |
+
+When it's a yes, charmer recreates the Newt container (`docker compose down
+&& docker compose up -d` in `/opt/newt`) on every configured agent that
+has a bundle, once pangolin is healthy again. A failed redial is a warning,
+not a phase failure. It can't reach connectors it doesn't manage, so it
+reads Pangolin's `newt`/`sites` tables and names every site whose `newtId`
+isn't pinned for a configured agent (added later from the dashboard, or
+brought in by a restore). Those need `docker compose down && docker compose
+up -d` on their own host (or `systemctl restart` for a service install).
+With SQLite the list can't be read, so the notice is generic.
+
 ### restore *(optional)*
 
 Runs **before** `newt` on purpose: see below. Set `restore.postgres_dump`
@@ -497,31 +526,16 @@ the old secret off the source deployment in the first place — read it out
 of that install's own `config.yml`/`SERVER_SECRET` env var.)
 
 Recreating gerbil above restarts its WireGuard process, which drops any
-Newt agent that was already tunneled in. Since `newt` (below) skips itself
-whenever a restore just ran, nothing else in the pipeline would otherwise
-tell those agents to redial. So, for each configured `newt_agents` entry
-that already has a bundle at `/opt/newt`, `restore` finishes by running a
-plain `docker compose restart newt` on it — no credentials re-minted, no
-compose file rewritten, no DB lookup: the container's own compose file
-already carries the right `newtId`/secret from whenever it was first
-provisioned. An agent with no bundle yet is skipped (nothing to restart);
-one that doesn't come back is recorded as a warning, not a phase failure,
-since the restore itself already succeeded by that point.
-
-This only reaches agents charmer already has SSH access to, i.e. ones
-listed in `newt_agents` in the config used for this run — it does no DB
-lookup and prompts for nothing. With `newt_agents` empty (Newt managed
-entirely outside charmer, a legitimate and common choice), this step is a
-no-op: charmer has no visibility into those hosts and won't try to gain
-any. Redialing them after a restore is then a manual step on whatever
-system manages them, same as before this feature existed: on each such
-agent, `docker compose down` then `docker compose up -d` (not just
-`restart`) is the more reliable form — the same connection-recreation
-gerbil itself just went through, which a plain `restart` doesn't always
-reproduce for Newt's own reconnect logic. This applies to *any* Newt agent
-outside this run's `newt_agents` list, whether or not charmer provisioned
-it originally: e.g. an agent from a config that has since been trimmed, or
-one that was always managed by hand.
+Newt agent that was already tunneled in. So `restore` finishes by
+recreating the newt container (`docker compose down && docker compose up
+-d`) on every configured agent that already has a bundle at `/opt/newt`.
+No credentials are re-minted and no compose file is rewritten. An agent
+with no bundle yet is skipped; one that doesn't come back is a warning, not
+a phase failure, since the restore itself already succeeded by then.
+Every other site in the restored database is listed by name for a manual
+redial (see [Which restarts need the Newt agents
+redialed](#which-restarts-need-the-newt-agents-redialed)). `adopt_newt`,
+next, offers to bring their hosts under charmer.
 
 `charmer provision config.yml --only restore` scopes a run to just this
 phase regardless of `newt_agents`: `pangolin_phase` doesn't run, so
@@ -529,17 +543,52 @@ phase regardless of `newt_agents`: `pangolin_phase` doesn't run, so
 force-recreates. That's the right way to do a DB-only restore whether or
 not you use `newt_agents` at all.
 
+### adopt_newt *(optional, only after a restore)*
+
+Runs between `restore` and `newt`, and only once a restore has actually
+loaded a dump (`restore_at` in state). Each new load resets it to pending.
+Typical case: you provision with 0 agents so you can restore, and the
+restored database holds 3 sites whose connectors run on hosts charmer has
+never heard of.
+
+The phase lists those sites, then asks whether the old installation had
+connectors to take over. For each host it asks the same questions as
+`charmer init` (name, IP, SSH auth/user/sudo). None of that comes from the
+database. It connects and finds the connector container (`fosrl/newt`, or
+`fosrl/pangolin-cli` since Pangolin 1.23), reads its `newtId`/secret from
+`docker inspect` (`NEWT_ID`/`NEWT_SECRET`, `SITE_ID`/`SITE_SECRET`, or the
+`--id`/`--secret` args), and checks them against this Pangolin the way the
+connector itself does: `POST /api/v1/auth/newt/get-token` on loopback. It
+proposes the old Newt tag as the pin, shows the site name and whether the
+endpoint changes, then asks y/N.
+
+Adopting pins the credentials in state (`newt_id_<name>`/`newt_secret_<name>`,
+exactly what `newt` would have minted) and appends the agent to the config
+file. That edit is textual, so your comments survive. The file is then
+re-validated and rolled back if it doesn't load. The host also joins this
+run's fleet. Nothing on the agent changes yet: `newt` then removes the old
+container (only that container, not the rest of its compose project) and
+starts charmer's `/opt/newt` bundle with the same credentials. The site and
+its resources stay exactly as they were, with no re-mint, and the endpoint
+becomes this site's `base_url`. The old compose file still defines the
+container, so remove it there; charmer warns about this.
+
+Reported and skipped: a connector charmer can't read credentials from (a
+systemd service install, or a Newt reading a `CONFIG_FILE`), credentials
+this Pangolin rejects, and credentials that already belong to a configured
+agent. Adopted hosts skipped `preflight`/`base`, so run `--replay preflight
+base` afterwards. `--only adopt_newt` asks again at any time. Verify: every
+adopted pair is still accepted by Pangolin.
+
 ### newt
 
-Comes **after** `restore` in the pipeline, and is **skipped automatically**
-whenever a restore actually loaded a dump this run: a restored database
-may already carry Pangolin sites for these agents, and minting fresh ones
-on top would create duplicates. The skip is scoped to that one
-`charmer provision` invocation (`PhaseContext.restore_ran`, set only when
-`restore` genuinely applies a dump: see `phases/base.py`/`phases/
-restore_phase.py`), not persisted, so a later `--only newt` run for a
-specific agent still works normally; reconcile against Server Admin ->
-Sites on the dashboard first.
+Comes **after** `restore` and `adopt_newt` in the pipeline. Credentials
+already pinned in state (minted earlier, or adopted) are checked against
+Pangolin first (get-token): after a restore they may belong to a database
+that's gone. A rejected pair is re-minted only if you answer y. The same
+applies to an agent with nothing pinned right after a restore, whose dump
+may already have a site for it; declining skips that agent. The Root API
+key / org ID are asked for only when a site actually gets minted.
 
 When it does run: for each configured agent, mint its Pangolin site
 credentials via the integration API (see [Newt credential
@@ -818,10 +867,11 @@ private resource published through it and reached from outside, and
 `shutdown`/`start`/`clean`/`monitor`/`logs` all run against that same live
 site. Not yet exercised for real: multiple Newt agents in the same run,
 `tls.provider: self_signed`/`import`, SQLite, the `monitor.ips`/
-`base.unattended_upgrades` opt-ins, and `restore`'s
-post-restore newt-agent redial (added after the fact, from a real-world
-report of agents left disconnected post-restore; not yet run against a live
-agent).
+`base.unattended_upgrades` opt-ins, the newt-agent redial after a gerbil
+restart (`restore`, `pangolin`, `start`; added after the fact, from a
+real-world report of agents left disconnected post-restore; not yet run
+against a live agent), and `adopt_newt` (simulated against fake hosts
+only).
 
 **Hardening on real Debian 13 LXC Newt agents** (three Proxmox
 community-scripts "Docker LXC" containers, two privileged and one

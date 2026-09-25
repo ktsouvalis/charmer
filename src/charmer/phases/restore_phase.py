@@ -7,14 +7,15 @@ rather than half-up on half-data.
 
 Recreating gerbil (below) restarts its WireGuard process; any Newt agent
 that was already tunneled in before this run goes stale and needs to
-redial. This phase restarts each configured agent's *existing* `newt`
-container for that reason alone (no fresh credentials minted, no DB
-lookup needed: the running container already has the right newtId/secret
-baked into its own compose file from whenever it was provisioned). An
-agent with no `/opt/newt` bundle yet is skipped, not an error. This is
-best-effort, not gating: an unreachable/not-yet-onboarded agent is
-recorded as a warning, since the restore itself already succeeded and
-`charmer monitor`/`logs` is where ongoing agent health belongs.
+redial. This phase recreates each configured agent's *existing* `newt`
+container (down + up) for that reason alone (newt_ops.redial(): no fresh
+credentials minted, no compose changes). An agent with no `/opt/newt` bundle yet is
+skipped, not an error. This is best-effort, not gating: an agent that
+doesn't come back is recorded as a warning, since the restore itself
+already succeeded and `charmer monitor`/`logs` is where ongoing agent
+health belongs. Every other site in the restored database is listed for a
+manual restart; adopt_newt (the next phase) offers to bring their hosts
+under charmer.
 
 After the load, every org's `utilitySubnet` (the range Pangolin hands out
 site-resource alias addresses from) is checked. Orgs created before
@@ -41,6 +42,7 @@ from pathlib import Path
 
 from ..remote import wait_for
 from .base import Phase, PhaseContext, verify_public_reachable
+from .newt_ops import redial_all
 
 DUMP_STAGING = "/tmp/charmer-restore.sql.gz"
 
@@ -132,9 +134,11 @@ class RestorePhase(Phase):
         ]
         if ctx.cfg.newt_agents:
             lines.append(
-                f"restart the existing newt container (no re-mint, no compose changes) on "
+                f"recreate (down + up) the existing newt container (no re-mint, no compose changes) on "
                 f"{len(ctx.cfg.newt_agents)} configured agent(s) with a bundle already in place, "
                 "so they redial gerbil's recreated WireGuard process instead of sitting disconnected")
+        lines.append("list every Newt/site connector in the restored database that charmer doesn't "
+                     "manage, for a manual restart (adopt_newt, next, offers to take them over)")
         return lines
 
     def apply(self, ctx: PhaseContext) -> None:
@@ -254,13 +258,17 @@ class RestorePhase(Phase):
         if not r.ok:
             raise RuntimeError("failed to restart traefik after restore")
 
-        for agent_conn in ctx.agents:
-            self._redial_newt(ctx, agent_conn)
-
         ctx.state.data["generated"]["restore_sha256"] = digest
         ctx.state.data["generated"]["restore_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         ctx.state.save()
         ctx.restore_ran = True
+        # A fresh database means fresh unmanaged sites: offer adoption again.
+        ctx.state.mark_phase("adopt_newt", "pending")
+
+        # Last, after the restore is recorded: a redial failure is only a warning.
+        redial_all(ctx, "the restore recreated gerbil, so every Newt tunnel had to redial",
+                   hint="The adopt_newt phase, next, asks for the host of each connector from the "
+                        "old installation (IP/SSH) so charmer can take it over without re-minting.")
 
     def _utility_subnets(self, ctx: PhaseContext, conn, psql: str) -> None:
         """Check (and, with restore.utility_subnet_prefix, widen) every
@@ -308,28 +316,6 @@ class RestorePhase(Phase):
             ctx.record(node, f"{label} widened", upd.ok,
                        f"{reason}; clients pick up the wider route on reconnect" if upd.ok else upd.err,
                        warn=not upd.ok)
-
-    def _redial_newt(self, ctx: PhaseContext, agent_conn) -> None:
-        """Restart `agent_conn`'s existing newt container so it redials the
-        gerbil process this phase just recreated. No credentials touched, no
-        compose file rewritten: an agent with no bundle yet (never
-        provisioned by this site, or genuinely new) is skipped, not an
-        error; an agent that fails to come back is a warning, not a phase
-        failure (see module docstring)."""
-        node = agent_conn.name
-        if not agent_conn.run("test -f /opt/newt/docker-compose.yml").ok:
-            ctx.record(node, "newt redial", True, "no /opt/newt bundle here yet, nothing to restart")
-            return
-        ctx.begin(node, "restarting newt", "redialing gerbil's recreated WireGuard process")
-        r = agent_conn.run("cd /opt/newt && docker compose restart newt", timeout=60)
-        if not r.ok:
-            ctx.record(node, "newt redial", False, r.err, warn=True)
-            return
-        stable = wait_for(agent_conn, "cd /opt/newt && docker compose ps newt --format '{{.State}}'",
-                          expect="running", timeout=60, interval=3)
-        ctx.record(node, "newt redial", stable,
-                   "" if stable else "did not return to running; check docker compose logs newt on the agent",
-                   warn=not stable)
 
     def verify(self, ctx: PhaseContext) -> bool:
         if not ctx.cfg.restore_dump:

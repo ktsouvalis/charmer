@@ -52,6 +52,7 @@ from urllib.parse import quote
 
 from ..remote import gen_password, push_binary, push_file, render, wait_for
 from .base import Phase, PhaseContext, verify_public_reachable
+from .newt_ops import redial_all
 from .restore_phase import _wait_stable
 
 CONFIG_DIR = "/opt/pangolin/config"
@@ -257,6 +258,14 @@ class PangolinPhase(Phase):
                      "recreated), traefik "
                      "force-recreated only if gerbil was recreated/restarted; health-gate on Pangolin's own healthcheck. "
                      "Gerbil/traefik stay up otherwise, so the maintenance page covers a pangolin restart")
+        if cfg.newt_agents:
+            lines.append(f"if gerbil gets recreated/restarted: recreate newt (down + up) on the {len(cfg.newt_agents)} "
+                         "configured agent(s) so their tunnels redial (a pangolin/traefik/postgres restart "
+                         "needs nothing, Newt reconnects its websocket itself); connectors charmer doesn't "
+                         "manage are listed for a manual restart")
+        else:
+            lines.append("if gerbil gets recreated/restarted: list any Newt/site connectors in Pangolin's "
+                         "database for a manual restart (none are managed by charmer)")
         return lines
 
     # ----------------------------------------------------------------- apply
@@ -341,12 +350,14 @@ class PangolinPhase(Phase):
 
         ctx.begin(node, "docker compose up", "image pull can take minutes on first run")
         r = conn.run("cd /opt/pangolin && docker compose up -d", timeout=1800)
+        forced = False
         if not r.ok and before:
             # Last resort, the pre-0.10.1 behavior: recreate the whole stack.
             ctx.record(node, "docker compose up", False, f"{r.err}; falling back to --force-recreate", warn=True)
             ctx.begin(node, "docker compose up --force-recreate", "whole stack, brief outage")
             r = conn.run("cd /opt/pangolin && docker compose up -d --force-recreate", timeout=1800)
             before = {}  # everything is fresh now, nothing left to roll out
+            forced = True
         ctx.record(node, "starting", r.ok, r.err if not r.ok else "")
         if not r.ok:
             self._dump_logs(conn)
@@ -388,6 +399,12 @@ class PangolinPhase(Phase):
         if not healthy:
             self._dump_logs(conn)
             raise RuntimeError(f"{node}: pangolin never became healthy")
+
+        # Only a restarted gerbil strands Newt tunnels (see newt_ops.py);
+        # recreate_traefik is exactly "gerbil was recreated or restarted".
+        # After the health wait: a redialing Newt needs pangolin to answer.
+        if recreate_traefik or forced:
+            redial_all(ctx, "gerbil was restarted, so every Newt tunnel had to redial")
 
     def _services(self, conn) -> Services:
         r = conn.run("cd /opt/pangolin 2>/dev/null && docker compose ps -a "

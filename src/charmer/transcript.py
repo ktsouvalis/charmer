@@ -15,10 +15,11 @@ is captured; no phase has to opt in or remember to log anything itself.
 Secrets. What IS covered and what is NOT:
 Commands routinely embed the very secrets charmer generates: the Pangolin
 root API key in `curl -H 'Authorization: Bearer ...'`, the server secret /
-Postgres password / OIDC client secret in KEY=value assignments, and the
+Postgres password / OIDC client secret in KEY=value assignments, a Newt
+secret in a JSON body (`"secret": "..."`, the get-token check), and the
 base64 blob push_file()/push_binary() pipe through `base64 -d` to write
 rendered files (compose, config.yml, certs) whose CONTENT is secret-bearing
-even though the shell command itself is generic. redact() catches all three
+even though the shell command itself is generic. redact() catches all four
 patterns. It does NOT catch a secret embedded in free-form prose that
 doesn't match one of those shapes; this is best-effort, not a guarantee,
 which is why the file is written 0600 like the state file, and the handoff
@@ -38,6 +39,9 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
     # KEY=value assignments where KEY looks like a secret
     (re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:PASSWORD|SECRET|TOKEN|PASS|KEY)[A-Za-z0-9_]*)=\S+"),
      r"\1=<redacted>"),
+    # JSON bodies, e.g. newt_ops.check_credentials()'s {"newtId": ..., "secret": ...}
+    (re.compile(r'("[A-Za-z_]*(?:secret|Secret|password|Password|token|Token)"\s*:\s*")[^"]*(")'),
+     r"\1<redacted>\2"),
     # push_file()/push_binary() write rendered files via
     # `echo '<base64>' | base64 -d > path`; the encoded blob typically *is*
     # the secret (a whole config.yml/.env), so it is collapsed on sight.

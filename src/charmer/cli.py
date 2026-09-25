@@ -28,6 +28,7 @@ from rich.markdown import Markdown
 
 from . import __version__, changelog
 from .config import ConfigError, SiteConfig, load
+from .phases.adopt_newt_phase import AdoptNewtPhase
 from .phases.base import PhaseContext, console, run_phases
 from .phases.clean_phase import CleanPhase
 from .phases.handoff_phase import HandoffPhase
@@ -43,7 +44,7 @@ from .update import check_for_update, check_update_now, self_update
 
 PIPELINE = [
     PreflightPhase(), BasePhase(), PangolinPhase(),
-    RestorePhase(), NewtPhase(), HandoffPhase(),
+    RestorePhase(), AdoptNewtPhase(), NewtPhase(), HandoffPhase(),
 ]
 
 
@@ -147,7 +148,7 @@ def cmd_provision(args: argparse.Namespace) -> int:
             return 2
 
     cfg, state, fleet, transcript = _connected_command(args.config, "provision")
-    ctx = PhaseContext(cfg=cfg, state=state, fleet=fleet)
+    ctx = PhaseContext(cfg=cfg, state=state, fleet=fleet, config_path=Path(args.config))
     if args.replay:
         for name in args.replay:
             state.mark_phase(name, "pending")
@@ -273,7 +274,11 @@ def cmd_status(args: argparse.Namespace) -> int:
         console.print(f"\n[bold]newt agents[/bold] ({len(cfg.newt_agents)} configured):")
         for agent in cfg.newt_agents:
             minted = f"newt_id_{agent.name}" in generated
-            mark = "[green]credentials minted[/green]" if minted else "[dim]not minted yet[/dim]"
+            adopted = state.data.get("adopted", {}).get(agent.name)
+            if adopted:
+                mark = f"[green]credentials adopted[/green] [dim](site {adopted.get('site', '?')!r})[/dim]"
+            else:
+                mark = "[green]credentials minted[/green]" if minted else "[dim]not minted yet[/dim]"
             console.print(f"  {agent.name} ({agent.ip}) - {mark}")
 
     if cfg.restore_dump:

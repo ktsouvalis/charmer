@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.11.0] - 2026-09-25
+
+- **Newt agents are redialed whenever gerbil restarts, and only then.**
+  An agent's WireGuard tunnel is to gerbil's process. A pangolin, traefik
+  or postgres restart only drops Newt's websocket, which Newt redials
+  itself. So `pangolin` (gerbil recreated/restarted, or the
+  `--force-recreate` fallback), `restore` and `start` (including a gerbil
+  that `shutdown` had to bring back up) now recreate the newt container
+  (`docker compose down && docker compose up -d`, the form README already
+  recommended over `restart`) on every configured agent once pangolin is
+  healthy. Before this, only `restore` did it, with a plain `restart`. Each
+  of these also names every site in Pangolin's database that charmer
+  doesn't manage, so you know which connectors to restart by hand. README
+  "Which restarts need the Newt agents redialed" has the table.
+- **New `adopt_newt` phase, only after a restore.** It lists the restored
+  sites charmer doesn't manage, then asks for the host of each old
+  connector (name, IP, SSH, the same questions as `charmer init`, nothing
+  taken from the database). It finds the `fosrl/newt` or
+  `fosrl/pangolin-cli` container there, checks its `newtId`/secret against
+  this Pangolin via `get-token`, and on your y pins them in state and
+  appends the agent to the config file (comments kept, re-validated,
+  rolled back if invalid). `newt` then swaps the old container for
+  charmer's bundle under the same credentials: same site, no re-mint.
+- **`newt` no longer skips itself after a restore.** Pinned credentials are
+  checked first. A rejected pair, or an unpinned agent right after a
+  restore, is minted only after a y/N; declining skips that agent. The Root
+  API key / org ID are asked for only when a site is actually minted.
+- `charmer status` shows adopted agents; the transcript also redacts
+  `"secret": "..."` JSON bodies.
+- None of this has run against live agents yet: unit tests plus a
+  simulated run against fake hosts. No `config_version` bump: no config
+  key changed.
+
 ## [0.10.1] - 2026-09-25
 
 - **Re-running `pangolin` on a live stack no longer takes the whole stack

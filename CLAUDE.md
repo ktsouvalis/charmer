@@ -23,9 +23,13 @@ truth for "where things stand," not this file.
   the SSH layer, template rendering + checksummed push, the audit log).
 - `src/charmer/phases/base.py` — `Phase`/`PhaseContext`/`run_phases`.
   `src/charmer/phases/*.py` — the real phases: `preflight`, `base_setup`
-  (phase name `base`), `pangolin_phase`, `newt_phase`, `restore_phase`,
-  `handoff_phase`, plus `lifecycle.py` (shutdown/start) and
-  `clean_phase.py`.
+  (phase name `base`), `pangolin_phase`, `restore_phase`,
+  `adopt_newt_phase` (phase name `adopt_newt`, only after a restore),
+  `newt_phase`, `handoff_phase`, plus `lifecycle.py` (shutdown/start) and
+  `clean_phase.py`. `newt_ops.py` holds what several phases share about
+  agents: redial after a gerbil restart, the unmanaged-site notice,
+  connector discovery, the get-token credential check, and appending agents
+  to the config file.
 - `src/charmer/hostchecks.py` — pure detection logic over canned command
   output (ssh.socket/ssh.service conflict, sshd effective config, Docker API
   on TCP), shared by `preflight` (report) and `base` (acts on it).
@@ -63,6 +67,12 @@ truth for "where things stand," not this file.
   If TUN capability fails, describe the LXC-side fix conditionally ("if
   this is an unprivileged LXC...") — never assert the host's type.
 - Newt image tags must be pinned; `config.py` refuses `"latest"`.
+- Only a gerbil restart/recreate needs Newt agents redialed (down + up of
+  `/opt/newt`); pangolin/traefik/postgres restarts don't. Any code path that
+  can bounce gerbil must call `newt_ops.redial_all()` once pangolin is
+  healthy, which also lists connectors charmer doesn't manage.
+- Adopted agents' SSH details come from the operator, never from the
+  Pangolin database; adopted credentials must pass get-token first.
 - Newt credentials are minted automatically via the Pangolin integration
   API (see `pangolin_api.py` and README "Newt credential automation"), not
   pasted in by hand — the Root API key and org ID are the one prompted,
