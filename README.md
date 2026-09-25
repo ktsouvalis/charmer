@@ -630,6 +630,23 @@ from it (`{org}, θα επιστρέψουμε σε λίγο.`) instead of the E
 fallback in `config.py`; it's plain text in the generated config file, so
 edit it freely afterward.
 
+**Re-running the `pangolin` phase on a live stack** (`--only pangolin`,
+`--replay`, a config change) keeps gerbil and traefik up whenever it can,
+so the maintenance page covers pangolin's own restart and Newt tunnels
+don't drop. It never blanket-recreates the stack. `docker compose up -d`
+recreates only the services whose compose definition changed (compose's
+own config-hash). Bind-mounted file changes, which compose can't see, get a
+targeted `restart`: `config.yml` restarts pangolin *before* the `up`
+(traefik's `depends_on: service_healthy` makes compose fail the `up`
+while pangolin is unhealthy, even with traefik untouched), and Traefik's
+config/certs restart traefik after it. A recreated postgres also restarts
+pangolin, once postgres is healthy again. Traefik is force-recreated only
+when gerbil was recreated or restarted, for the namespace reason above;
+that's the one case with a brief gap on 80/443. If the `up` fails
+regardless, the phase falls back to `--force-recreate` on the whole stack.
+See `restart_pangolin_first()`/`rollout_actions()` in
+[pangolin_phase.py](src/charmer/phases/pangolin_phase.py).
+
 **Scope, explicitly:** this covers the dashboard host only. Resource
 subdomains aren't in charmer's static Traefik config: they're pushed live
 by Pangolin's own backend via the `http` provider

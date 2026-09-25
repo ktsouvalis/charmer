@@ -52,6 +52,7 @@ from urllib.parse import quote
 
 from ..remote import gen_password, push_binary, push_file, render, wait_for
 from .base import Phase, PhaseContext, verify_public_reachable
+from .restore_phase import _wait_stable
 
 CONFIG_DIR = "/opt/pangolin/config"
 CERT_DIR = f"{CONFIG_DIR}/traefik/certs"
@@ -67,6 +68,68 @@ MAINTENANCE_TAG = "1.27-alpine"
 # template); arbitrary but clear of every other port this stack uses
 # (80/443 gerbil/traefik, 3000-3004 pangolin/gerbil, 5432 postgres, 51820/21820 gerbil).
 MAINTENANCE_PORT = 8091
+
+
+# Order restarts run in: postgres before pangolin (which needs it), traefik
+# last (it serves the maintenance page while pangolin restarts).
+_RESTART_ORDER = ("postgres", "pangolin", "gerbil", "maintenance", "traefik")
+_BROKEN_STATES = ("restarting", "exited", "dead", "created")
+
+# service -> (container id, state, health), from `docker compose ps -a`.
+Services = dict[str, tuple[str, str, str]]
+
+
+def restart_pangolin_first(before: Services, pangolin_files: bool) -> bool:
+    """Whether to `restart pangolin` BEFORE `docker compose up -d`.
+
+    Traefik has `depends_on: pangolin: service_healthy`, and compose checks
+    that on every `up`, even with traefik already running and unchanged: an
+    unhealthy pangolin makes `up` fail ("dependency failed to start"), and
+    can leave a recreated traefik created but not started. So a changed
+    config.yml (which pangolin only reads at startup) or a pangolin that
+    isn't healthy right now gets its restart first, while gerbil/traefik
+    stay up and serve the maintenance page. Never on a first run.
+    """
+    if not before or "pangolin" not in before:
+        return False
+    _, state, health = before["pangolin"]
+    return pangolin_files or state != "running" or health not in ("healthy", "")
+
+
+def rollout_actions(before: Services, after: Services, traefik_files: bool) -> tuple[list[str], bool]:
+    """Decide what still needs doing after a plain `docker compose up -d`.
+
+    Compose already recreated every service whose *definition* changed (its
+    config-hash label). It can't see bind-mounted file content: changed
+    Traefik config/certs mean a `restart traefik` (the files are rewritten
+    in place, so the existing mount already sees them). The maintenance
+    page needs nothing, nginx reads index.html per request. A recreated
+    postgres means a `restart pangolin`, so it reconnects cleanly.
+
+    Returns (services to `restart`, in order; whether to force-recreate
+    traefik). Traefik is force-recreated whenever gerbil was recreated or
+    gets restarted: it lives in gerbil's network namespace (see lifecycle.py). A first run
+    (nothing existed before) needs neither.
+    """
+    if not before:
+        return [], False
+    recreated = {svc for svc, (cid, _, _) in after.items() if before.get(svc, ("", "", ""))[0] != cid}
+    gerbil_recreated = "gerbil" in recreated
+    restart: set[str] = set()
+    if "postgres" in recreated:
+        restart.add("pangolin")
+    if traefik_files:
+        restart.add("traefik")
+    # Recover anything left crash-looping by an earlier failed apply: it
+    # could otherwise sit in Docker's restart backoff past the health wait.
+    restart |= {svc for svc, (_, state, _) in after.items() if state in _BROKEN_STATES}
+    restart -= recreated
+    # A gerbil restart gets it a new network namespace too, same as a
+    # recreate; either way traefik must be recreated, a restart won't do.
+    recreate_traefik = gerbil_recreated or "gerbil" in restart
+    if recreate_traefik:
+        restart.discard("traefik")
+    return [svc for svc in _RESTART_ORDER if svc in restart], recreate_traefik
 
 
 class PangolinPhase(Phase):
@@ -188,7 +251,12 @@ class PangolinPhase(Phase):
         lines.append(f"render + push the maintenance page (nginx:{MAINTENANCE_TAG}, loopback-only): "
                      "Traefik falls back to it on the dashboard host whenever pangolin is unreachable, "
                      "including during `charmer shutdown` (resource subdomains are not covered, see README 'Ingress')")
-        lines.append("docker compose up -d, health-gate on Pangolin's own healthcheck (image pull can take minutes)")
+        lines.append("docker compose up -d (compose recreates only services whose definition changed), "
+                     "with only what a changed bind-mounted file needs restarted (config.yml -> pangolin, "
+                     "before the up; Traefik config/cert -> traefik; pangolin too if postgres was "
+                     "recreated), traefik "
+                     "force-recreated only if gerbil was recreated/restarted; health-gate on Pangolin's own healthcheck. "
+                     "Gerbil/traefik stay up otherwise, so the maintenance page covers a pangolin restart")
         return lines
 
     # ----------------------------------------------------------------- apply
@@ -261,18 +329,57 @@ class PangolinPhase(Phase):
         # see run_phases()). A container-count check here previously let a partial
         # failure (e.g. postgres/maintenance up, pangolin crash-looping on stale
         # config) look "already running" and skip straight to the health wait.
+        #
+        # No blanket --force-recreate either: that took down gerbil (the
+        # 80/443 listener) and traefik on every change, so the maintenance
+        # page couldn't show and every tunnel dropped. Compose recreates only
+        # what changed in the compose file; restart_pangolin_first() and
+        # rollout_actions() cover bind-mounted file changes and recovery.
+        before = self._services(conn)
+        if restart_pangolin_first(before, pangolin_files=c2):
+            self._restart(ctx, conn, "pangolin", "gerbil/traefik stay up, serving the maintenance page")
+
         ctx.begin(node, "docker compose up", "image pull can take minutes on first run")
-        # --force-recreate when config content changed: compose only recreates a
-        # container when the *service definition* changes, not when a bind-mounted
-        # file's content does. Without this, a container already crash-looping on
-        # stale config (e.g. from a previous failed apply) can sit mid Docker
-        # restart-backoff and never pick up the fix within this run's health wait.
-        force = " --force-recreate" if changed else ""
-        r = conn.run(f"cd /opt/pangolin && docker compose up -d{force}", timeout=1800)
+        r = conn.run("cd /opt/pangolin && docker compose up -d", timeout=1800)
+        if not r.ok and before:
+            # Last resort, the pre-0.10.1 behavior: recreate the whole stack.
+            ctx.record(node, "docker compose up", False, f"{r.err}; falling back to --force-recreate", warn=True)
+            ctx.begin(node, "docker compose up --force-recreate", "whole stack, brief outage")
+            r = conn.run("cd /opt/pangolin && docker compose up -d --force-recreate", timeout=1800)
+            before = {}  # everything is fresh now, nothing left to roll out
         ctx.record(node, "starting", r.ok, r.err if not r.ok else "")
         if not r.ok:
             self._dump_logs(conn)
             raise RuntimeError("docker compose up failed, see output above")
+
+        after = self._services(conn)
+        if before:
+            recreated = sorted(svc for svc, (cid, _, _) in after.items() if before.get(svc, ("", "", ""))[0] != cid)
+            ctx.record(node, "recreated by compose (definition changed)", True, ", ".join(recreated) or "none")
+        restarts, recreate_traefik = rollout_actions(before, after, traefik_files=c3 or c4 or cert_changed)
+        for svc in restarts:
+            if svc == "pangolin" and before and after.get("postgres", ("",))[0] != before.get("postgres", ("",))[0]:
+                pg_ok = wait_for(conn, "cd /opt/pangolin && docker compose ps postgres --format '{{.Health}}'",
+                                 expect="healthy", timeout=120, interval=3,
+                                 tick=lambda e: ctx.tick(f"waiting for the recreated postgres ({int(e)}s/120s)"))
+                ctx.record(node, "recreated postgres healthy", pg_ok, "")
+                if not pg_ok:
+                    self._dump_logs(conn)
+                    raise RuntimeError("recreated postgres never became healthy")
+            self._restart(ctx, conn, svc)
+        if recreate_traefik:
+            ctx.begin(node, "confirming gerbil is stable")
+            stable = _wait_stable(conn, "gerbil", ctx)
+            ctx.record(node, "gerbil stable", stable, "" if stable else "gerbil kept restarting")
+            if not stable:
+                self._dump_logs(conn)
+                raise RuntimeError("gerbil did not reach a stable running state")
+            ctx.begin(node, "recreating traefik", "gerbil was recreated/restarted; traefik lives in its network namespace")
+            r = conn.run("cd /opt/pangolin && docker compose up -d --no-deps --force-recreate traefik",
+                         timeout=60)
+            ctx.record(node, "traefik recreated", r.ok, r.err if not r.ok else "")
+            if not r.ok:
+                raise RuntimeError("failed to recreate traefik")
 
         healthy = wait_for(conn, "cd /opt/pangolin && docker compose ps pangolin --format '{{.Health}}'",
                            expect="healthy", timeout=600, interval=5,
@@ -281,6 +388,24 @@ class PangolinPhase(Phase):
         if not healthy:
             self._dump_logs(conn)
             raise RuntimeError(f"{node}: pangolin never became healthy")
+
+    def _services(self, conn) -> Services:
+        r = conn.run("cd /opt/pangolin 2>/dev/null && docker compose ps -a "
+                     "--format '{{.Service}}|{{.ID}}|{{.State}}|{{.Health}}'")
+        out: Services = {}
+        for line in r.out.splitlines() if r.ok else []:
+            parts = line.strip().split("|")
+            if len(parts) == 4:
+                out[parts[0]] = (parts[1], parts[2], parts[3])
+        return out
+
+    def _restart(self, ctx: PhaseContext, conn, svc: str, detail: str = "") -> None:
+        ctx.begin(conn.name, f"restarting {svc}", detail)
+        r = conn.run(f"cd /opt/pangolin && docker compose restart {svc}", timeout=120)
+        ctx.record(conn.name, f"{svc} restarted", r.ok, r.err if not r.ok else "")
+        if not r.ok:
+            self._dump_logs(conn)
+            raise RuntimeError(f"failed to restart {svc}")
 
     def _dump_logs(self, conn) -> None:
         for svc in ("pangolin", "gerbil", "traefik"):

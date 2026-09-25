@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.1] - 2026-09-25
+
+- **Re-running `pangolin` on a live stack no longer takes the whole stack
+  down.** Any changed file used to trigger `docker compose up -d
+  --force-recreate`, which recreated gerbil (the 80/443 listener) and
+  traefik too: no maintenance page during the rollout, and every Newt
+  tunnel dropped. Found adding `postgres_loopback_port` to a production
+  site. Now a plain `up -d` recreates only services whose compose
+  definition changed. Bind-mounted file changes get a targeted `restart`:
+  `config.yml` restarts pangolin *before* the `up` (compose fails an `up`
+  while pangolin is unhealthy, because of traefik's `service_healthy`
+  dependency, even with traefik untouched), and Traefik config/certs
+  restart traefik. A recreated postgres restarts pangolin once it's
+  healthy. Traefik is force-recreated only if gerbil was recreated or
+  restarted. Anything crash-looping is restarted. If the `up` still fails,
+  it falls back to the old whole-stack `--force-recreate`. Compose behavior
+  verified locally against Docker Compose v5.5.1; not yet exercised on a
+  real Pangolin host.
+
 ## [0.10.0] - 2026-09-25
 
 - **New optional `pangolin.postgres_loopback_port`.** Publishes the postgres
