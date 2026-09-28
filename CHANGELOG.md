@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.12.0] - 2026-09-28
+
+- **Pangolin's integration API is on by default.** It used to be enabled
+  only when `newt_agents` were configured (or with an explicit
+  `pangolin.integration_api.enabled: true`), since the `newt` phase was its
+  only user. External tooling (dgu-services, importing and normalizing
+  private resources) needs it too, so `pangolin.integration_api.enabled`
+  now defaults to `true`. It's still published loopback-only
+  (`127.0.0.1:3003`); `enabled: false` turns it off and is still refused
+  when `newt_agents` are configured. Existing deployments without agents
+  get it on their next `pangolin` phase run (config.yml changes, so
+  pangolin restarts).
+- **Postgres is published on `127.0.0.1:5432` by default.**
+  `pangolin.postgres_loopback_port` now defaults to `5432` with `database:
+  postgres` (it used to default to unpublished), and `charmer init` no
+  longer asks. dgu-services' Newt access-log resolver reads Pangolin's
+  Postgres through an SSH tunnel, which used to target the container's
+  bridge IP and break whenever postgres was recreated. `null` restores the
+  official never-published layout. Still loopback-only, still checked by
+  `preflight` and `verify()`. Existing deployments get it on their next
+  `pangolin` phase run: postgres is recreated with the new publish, then
+  pangolin is restarted once it's healthy.
+
 ## [0.11.0] - 2026-09-25
 
 - **Newt agents are redialed whenever gerbil restarts, and only then.**

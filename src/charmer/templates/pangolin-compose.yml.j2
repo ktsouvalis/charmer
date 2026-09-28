@@ -96,7 +96,7 @@ services:
       POSTGRES_PASSWORD: "{{ postgres_password }}"
       POSTGRES_DB: pangolin
 {% if postgres_loopback_port | default(none) %}
-    # Optional, off by default (pangolin.postgres_loopback_port): the
+    # pangolin.postgres_loopback_port (5432 unless set to null): the
     # official layout never publishes postgres. Loopback only, for host-side
     # tooling; pangolin itself still reaches it as `postgres:5432`.
     ports:

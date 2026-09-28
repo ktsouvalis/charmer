@@ -237,14 +237,9 @@ class PangolinPhase(Phase):
         else:
             lines.append(f"tls: import; validate {cfg.tls.import_.get('fullchain')} on this workstation "
                          "and place it as Traefik's default certificate")
-        enable_api = cfg.pangolin.integration_api_enabled
-        if enable_api is None:
-            enable_api = bool(cfg.newt_agents)
-        if enable_api:
-            reason = (f"used by the newt phase to provision {len(cfg.newt_agents)} agent(s)"
-                      if cfg.newt_agents else "pangolin.integration_api.enabled is set")
+        if cfg.pangolin.integration_api_enabled:
             lines.append(f"enable Pangolin's integration API (loopback-only, port "
-                         f"{cfg.pangolin.integration_api_port}): {reason}")
+                         f"{cfg.pangolin.integration_api_port})")
         if cfg.smtp.enabled:
             note = "" if "pangolin_smtp_pass" in ctx.state.data["generated"] else ", you will be asked once (hidden input)"
             lines.append(f"config.yml email: section ({cfg.smtp.host}:{cfg.smtp.port}, user {cfg.smtp.user}): "
@@ -276,8 +271,6 @@ class PangolinPhase(Phase):
         sec = self._secrets(ctx)
         tlsctx = self._tls_context(ctx)
         enable_api = cfg.pangolin.integration_api_enabled
-        if enable_api is None:
-            enable_api = bool(cfg.newt_agents)
         integration_port = cfg.pangolin.integration_api_port
 
         dirs = f"{CONFIG_DIR}/traefik/logs {CONFIG_DIR}/letsencrypt {CERT_DIR} {MAINTENANCE_DIR}"
@@ -519,10 +512,7 @@ class PangolinPhase(Phase):
         ctx.record(node, "verify: maintenance page container running", maint_ok, r.out or r.err)
         ok = ok and maint_ok
 
-        enable_api = ctx.cfg.pangolin.integration_api_enabled
-        if enable_api is None:
-            enable_api = bool(ctx.cfg.newt_agents)
-        if enable_api:
+        if ctx.cfg.pangolin.integration_api_enabled:
             port = ctx.cfg.pangolin.integration_api_port
             r = conn.run(f"curl -sk -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{port}/v1/")
             api3_ok = r.out not in ("", "000")

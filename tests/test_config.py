@@ -161,16 +161,16 @@ def test_monitor_ips_rejects_invalid_entry(tmp_path):
         load(path)
 
 
-def test_integration_api_defaults_to_auto_and_3003():
+def test_integration_api_defaults_to_on_and_3003():
     cfg = load(EXAMPLE)
-    assert cfg.pangolin.integration_api_enabled is None
+    assert cfg.pangolin.integration_api_enabled is True
     assert cfg.pangolin.integration_api_port == 3003
 
 
-def test_integration_api_can_be_forced_on_with_custom_port(tmp_path):
+def test_integration_api_custom_port(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    enabled: true\n    port: 9000"))
+        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    port: 9000"))
     cfg = load(path)
     assert cfg.pangolin.integration_api_enabled is True
     assert cfg.pangolin.integration_api_port == 9000
@@ -180,7 +180,7 @@ def test_integration_api_explicit_disable_conflicts_with_newt_agents(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
         "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    enabled: false"))
-    with pytest.raises(ConfigError, match="integration_api.enabled is explicitly false"):
+    with pytest.raises(ConfigError, match="integration_api.enabled is false"):
         load(path)
 
 
@@ -200,15 +200,28 @@ def test_integration_api_port_collision_rejected(tmp_path):
         load(path)
 
 
-def test_postgres_loopback_port_off_by_default():
-    assert load(EXAMPLE).pangolin.postgres_loopback_port is None
+def test_postgres_loopback_port_defaults_to_5432():
+    assert load(EXAMPLE).pangolin.postgres_loopback_port == 5432
+
+
+def test_postgres_loopback_port_null_opts_out(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "base_domain: uop.gr", "base_domain: uop.gr\n  postgres_loopback_port: null"))
+    assert load(path).pangolin.postgres_loopback_port is None
+
+
+def test_postgres_loopback_port_unset_with_sqlite(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace("database: postgres", "database: sqlite"))
+    assert load(path).pangolin.postgres_loopback_port is None
 
 
 def test_postgres_loopback_port_accepted(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "base_domain: uop.gr", "base_domain: uop.gr\n  postgres_loopback_port: 5432"))
-    assert load(path).pangolin.postgres_loopback_port == 5432
+        "base_domain: uop.gr", "base_domain: uop.gr\n  postgres_loopback_port: 15432"))
+    assert load(path).pangolin.postgres_loopback_port == 15432
 
 
 @pytest.mark.parametrize("value, match", [

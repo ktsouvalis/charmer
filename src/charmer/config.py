@@ -43,7 +43,7 @@ CONFIG_SCHEMA_VERSION = 1
 # network_mode: service:gerbil; see pangolin-compose.yml.j2 and README
 # "Ingress"). Pangolin/Postgres never leave the compose network at all,
 # except for charmer's own loopback-only publishes (pangolin-compose.yml.j2);
-# of those, only the optional pangolin.postgres_loopback_port is checked by
+# of those, only pangolin.postgres_loopback_port is checked by
 # preflight, since it's the one likely to clash with a host-level Postgres.
 REQUIRED_FREE_TCP_PORTS = [80, 443]
 # Gerbil's WireGuard ports, host-published wildcard, exactly as the
@@ -101,24 +101,25 @@ class PangolinConfig:
     database: str = "postgres"
     postgres_user: str = "pangolin"
     base_domain: str | None = None
-    # Optional override of Pangolin's integration API (config.yml's
-    # `flags.enable_integration_api` / `server.integration_port`, see
-    # pangolin_api.py). None (default) keeps today's auto behavior: on, port
-    # 3003, only when newt_agents are configured. Set integration_api.enabled
-    # explicitly to turn it on independent of newt_agents (e.g. for your own
-    # external tooling against the API) or integration_api.port to use
-    # something other than 3003. Always published loopback-only
+    # Pangolin's integration API (config.yml's `flags.enable_integration_api`
+    # / `server.integration_port`, see pangolin_api.py). On by default, port
+    # 3003, whether or not newt_agents are configured: the newt phase mints
+    # credentials through it, and external tooling (e.g. dgu-services) uses
+    # it too. integration_api.enabled: false turns it off (refused when
+    # newt_agents are configured); integration_api.port overrides 3003.
+    # Always published loopback-only
     # (127.0.0.1:<port>) on the Pangolin host either way -- charmer never
     # routes it through Traefik or any public interface, see README
     # "Ingress"; exposing it beyond the host is on you (e.g. an SSH tunnel),
     # not something charmer's managed Traefik config will do.
-    integration_api_enabled: bool | None = None
+    integration_api_enabled: bool = True
     integration_api_port: int = 3003
-    # Optional loopback-only host publish of the postgres container
+    # Loopback-only host publish of the postgres container
     # (`127.0.0.1:<port>:5432`), for host-side tooling that can't just
-    # `docker exec postgres psql` (e.g. a GUI client over `ssh -L`). None
-    # (default) keeps the official layout's never-published postgres. Never
-    # anything but 127.0.0.1: charmer has no knob for a wildcard publish.
+    # `docker exec postgres psql` (e.g. dgu-services' SSH tunnel, a GUI
+    # client over `ssh -L`). Defaults to 5432 with `database: postgres`;
+    # an explicit null keeps the official layout's never-published postgres.
+    # Never anything but 127.0.0.1: charmer has no knob for a wildcard publish.
     postgres_loopback_port: int | None = None
 
 
@@ -194,6 +195,9 @@ class SiteConfig:
     @property
     def base_url(self) -> str:
         return f"{self.public_scheme}://{self.dashboard_host}"
+
+
+_MISSING = object()
 
 
 def _get(d: dict, path: str, default=None):
@@ -314,9 +318,7 @@ def load(path: str | Path) -> SiteConfig:
                 f"{type(raw_tag).__name__} {raw_tag!r}, not a version string. "
                 f"Quote it: pangolin.{tag_key}: \"{raw_tag}\"")
 
-    integration_api_enabled_raw = _get(raw, "pangolin.integration_api.enabled")
-    integration_api_enabled = (None if integration_api_enabled_raw is None
-                               else bool(integration_api_enabled_raw))
+    integration_api_enabled = bool(_get(raw, "pangolin.integration_api.enabled", True))
     integration_api_port = int(_get(raw, "pangolin.integration_api.port", 3003))
     # 3001/8091 are charmer's other loopback-only publishes on this same host
     # (Pangolin's own API, the maintenance page; see pangolin-compose.yml.j2)
@@ -329,7 +331,11 @@ def load(path: str | Path) -> SiteConfig:
             "already publishes loopback-only on the Pangolin host (3001 Pangolin's own API, 8091 "
             "the maintenance page)")
 
-    postgres_loopback_port_raw = _get(raw, "pangolin.postgres_loopback_port")
+    # Absent -> 5432 whenever postgres is the database; an explicit null
+    # opts out of the publish entirely.
+    postgres_loopback_port_raw = _get(raw, "pangolin.postgres_loopback_port", _MISSING)
+    if postgres_loopback_port_raw is _MISSING:
+        postgres_loopback_port_raw = 5432 if database == "postgres" else None
     postgres_loopback_port: int | None = None
     if postgres_loopback_port_raw is not None:
         if isinstance(postgres_loopback_port_raw, bool) or not isinstance(postgres_loopback_port_raw, int):
@@ -420,7 +426,7 @@ def load(path: str | Path) -> SiteConfig:
 
     if agents and integration_api_enabled is False:
         problems.append(
-            "pangolin.integration_api.enabled is explicitly false but newt_agents are configured: "
+            "pangolin.integration_api.enabled is false but newt_agents are configured: "
             "the newt phase needs the integration API to mint their credentials")
 
     # --- maintenance page ---

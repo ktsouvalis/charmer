@@ -355,12 +355,13 @@ lays it out, plus `config.yml`. See [Ingress](#ingress) below for why
 there's no reverse proxy or passthrough layer in front of any of this.
 `server.secret` and the Postgres password are generated once and pinned in
 state. Postgres, when used, is a plain
-container on the compose bridge network, never published to the host by
-default: reachable only from pangolin as `postgres:5432`. Setting
-`pangolin.postgres_loopback_port` (asked by `charmer init`) additionally
-publishes it as `127.0.0.1:<port>` on the Pangolin host, for tools that
-need a TCP port (e.g. a GUI client over `ssh -L`); `docker exec postgres
-psql` works without it. It's loopback-only by construction: there's no
+container on the compose bridge network, reachable from pangolin as
+`postgres:5432`, and also published as `127.0.0.1:5432` on the Pangolin
+host (`pangolin.postgres_loopback_port` changes the port, `null` drops the
+publish and restores the official never-published layout). That publish
+is for host-side tools that need a stable TCP port: dgu-services' SSH
+tunnel (see "Newt credential automation"), or a GUI client over `ssh -L`.
+It's loopback-only by construction: there's no
 knob for a wider bind, `preflight` checks the port is free, and this
 phase's `verify()` fails if anything listens on it beyond loopback. SQLite
 is accepted for `lab` only (`config.py` refuses it in production).
@@ -372,8 +373,8 @@ API from the host over loopback, which the official layout never exposes
 (it's bridge-internal only, reachable by Traefik as `pangolin:3001`). So
 Pangolin's compose block additionally publishes `127.0.0.1:3001` always,
 and `127.0.0.1:<port>` (`3003` by default, or whatever
-`pangolin.integration_api.port` sets) when the integration API is on --
-any Newt agents configured, or `pangolin.integration_api.enabled: true` --
+`pangolin.integration_api.port` sets) while the integration API is on,
+which is the default (`pangolin.integration_api.enabled: false` drops it),
 both loopback bound, invisible off-host, and irrelevant to the official layout's own
 container-to-container traffic.
 
@@ -404,10 +405,10 @@ alone and only Gerbil/Traefik are retried.
 
 Also renders whatever the configured `tls.provider` needs on Traefik's
 side (see [Ingress](#ingress)) and turns on Pangolin's integration API
-(`flags.enable_integration_api`, loopback-only) when any Newt agents are
-configured, or unconditionally if `pangolin.integration_api.enabled: true`
-is set (see "Newt credential automation" for that and
-`pangolin.integration_api.port`).
+(`flags.enable_integration_api`, loopback-only) by default, whether or not
+any Newt agents are configured, so external tooling such as dgu-services
+can use it (see "Newt credential automation" for
+`pangolin.integration_api.enabled` / `.port`).
 
 **Pangolin has no OIDC config.yml key.** Confirmed against
 docs.pangolin.net: setting up an external identity provider (Authentik,
@@ -424,8 +425,8 @@ config file; `smtp_pass` is deliberately **not** a config-file field: this
 phase prompts for it once (hidden) the first time it runs and pins it in
 local state, the same treatment as the Newt Root API key.
 
-Verify: Pangolin's own API answers on loopback, (when Newt agents are
-configured) so does the integration API, and an end-to-end request over the
+Verify: Pangolin's own API answers on loopback, so does the integration
+API (unless `pangolin.integration_api.enabled: false`), and an end-to-end request over the
 actual public interface (Gerbil/Traefik) reaches Pangolin's API.
 
 #### Which restarts need the Newt agents redialed
@@ -734,11 +735,14 @@ deliberately never exposed.
 
 The port and whether it's on at all are optional config knobs
 (`pangolin.integration_api.port`, default `3003`; `pangolin.integration_api.enabled`,
-default unset) if you also want to hit the integration API yourself for your
-own tooling, independent of whether any `newt_agents` are configured — set
-`enabled: true` to turn it on regardless, or `false` to force it off (refused
-at config-load time if `newt_agents` are configured, since the `newt` phase
-needs it). Either way it's still only ever published loopback-only
+default `true`). It's on regardless of whether any `newt_agents` are
+configured, because external tooling (dgu-services, which imports and
+normalizes private resources) uses it too. dgu-services reaches it, and
+Postgres's `127.0.0.1:5432` publish, through an SSH local-forward to those
+loopback ports on the Pangolin host, never to container bridge IPs, which
+change whenever the containers are recreated. `enabled: false` turns it off,
+refused at config-load time if `newt_agents` are configured, since the
+`newt` phase needs it. Either way it's still only ever published loopback-only
 (`127.0.0.1:<port>`) on the Pangolin host, same as today: charmer's own
 managed Traefik config never routes it anywhere, so reaching it from off-host
 is on you (e.g. an SSH tunnel), not something this repo wires up.
