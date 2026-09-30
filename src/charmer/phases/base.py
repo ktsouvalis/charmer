@@ -47,7 +47,7 @@ class PhaseContext:
     # Set by restore_phase when it actually loads a dump (not the no-op /
     # declined case): newt_phase then asks before minting a site for an
     # agent with nothing pinned (the dump may already have one), and
-    # adopt_newt runs. Scoped to this one `charmer provision` invocation.
+    # adopt_newt runs. Scoped to this one `charm provision` invocation.
     restore_ran: bool = False
     # The config file this run loaded; adopt_newt appends adopted agents to it.
     config_path: Path | None = None

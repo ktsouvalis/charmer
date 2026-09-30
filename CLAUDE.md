@@ -39,9 +39,9 @@ truth for "where things stand," not this file.
 - `src/charmer/templates/*.j2` — Jinja2 templates for every rendered file
   (Pangolin Compose/config.yml, Traefik static+dynamic config, the Newt
   Compose bundle).
-- `src/charmer/monitor/dashboard.py`, `monitor/logs.py` — `charmer monitor`
-  / `charmer logs`, SSH-based (no separate public monitoring ports).
-- `src/charmer/init_wizard.py`, `cli.py` — `charmer init` and the top-level
+- `src/charmer/monitor/dashboard.py`, `monitor/logs.py` — `charm monitor`
+  / `charm logs`, SSH-based (no separate public monitoring ports).
+- `src/charmer/init_wizard.py`, `cli.py` — `charm init` and the top-level
   argparse wiring.
 
 ## Rules
@@ -87,6 +87,6 @@ truth for "where things stand," not this file.
 - A Docker API on TCP (2375/2376, or any `tcp://` dockerd host) is always a
   preflight finding: refused in production, warned in lab.
 - Keep local state, generated secrets, and the transcript log mode `0600`.
-- `charmer monitor` and `charmer logs` are the two migrated-utility names;
+- `charm monitor` and `charm logs` are the two migrated-utility names;
   don't reintroduce the old `create_`/`normalize_` tools or the plain
   print-loop stubs this rebuild replaced.

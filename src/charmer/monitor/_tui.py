@@ -1,5 +1,5 @@
-"""The Textual App behind `charmer monitor`. Split out of dashboard.py so
-that importing dashboard.py (e.g. from `charmer logs`, which shares its
+"""The Textual App behind `charm monitor`. Split out of dashboard.py so
+that importing dashboard.py (e.g. from `charm logs`, which shares its
 config loader) never requires Textual's screen machinery to spin up in a
 non-tty context; `dashboard.run()` only imports this module on the
 interactive path.

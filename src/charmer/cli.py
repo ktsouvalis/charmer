@@ -1,19 +1,19 @@
 """charmer: provision a single self-hosted Pangolin CE node + separate
 Newt agents over SSH.
 
-    charmer init                       interactive wizard -> config.<site>.yml
-    charmer provision config.yml       phase runner (resumable)
-    charmer provision config.yml --only preflight
-    charmer shutdown config.yml        stop pangolin (gerbil + traefik + maintenance page stay up)
-    charmer start config.yml           start them again (refuses without a prior shutdown)
-    charmer clean config.yml           tear the site down to a bare host
-    charmer status config.yml          phase progress + pinned state, local only (no SSH)
-    charmer monitor config.<site>.monitor.yml   real-time health dashboard
-    charmer logs config.<site>.monitor.yml      cluster-wide log viewer (SSH), --save to download
-    charmer update                     install the latest release (zipapp binary only)
-    charmer check-update               check for a newer release without installing it
-    charmer whats-new                  show the changelog for the installed version
-    charmer licenses                   show third-party license info
+    charm init                         interactive wizard -> config.<site>.yml
+    charm provision config.yml         phase runner (resumable)
+    charm provision config.yml --only preflight
+    charm shutdown config.yml          stop pangolin (gerbil + traefik + maintenance page stay up)
+    charm start config.yml             start them again (refuses without a prior shutdown)
+    charm clean config.yml             tear the site down to a bare host
+    charm status config.yml            phase progress + pinned state, local only (no SSH)
+    charm monitor config.<site>.monitor.yml     real-time health dashboard
+    charm logs config.<site>.monitor.yml        cluster-wide log viewer (SSH), --save to download
+    charm update                       install the latest release (zipapp binary only)
+    charm check-update                 check for a newer release without installing it
+    charm whats-new                    show the changelog for the installed version
+    charm licenses                     show third-party license info
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ def _connected_command(config_path: str, command: str):
 def cmd_init(args: argparse.Namespace) -> int:
     from .init_wizard import run_wizard
     path = run_wizard(args.output)
-    console.print(f"wrote {path} (mode 0600), read it, then: charmer provision {path} --only preflight")
+    console.print(f"wrote {path} (mode 0600), read it, then: charm provision {path} --only preflight")
     return 0
 
 
@@ -331,14 +331,14 @@ def cmd_whats_new(args: argparse.Namespace) -> int:
     entry = changelog.entry_for(version, text)
     if entry is None:
         console.print(f"[yellow]no changelog entry for {version}.[/yellow] "
-                      "Run `charmer whats-new --all` for the full history.")
+                      "Run `charm whats-new --all` for the full history.")
         return 1
     console.print(Markdown(entry))
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="charmer", description=__doc__,
+    parser = argparse.ArgumentParser(prog="charm", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version=f"charmer {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -417,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
         if latest:
             console.print(
                 f"[yellow]a new charmer release is available: "
-                f"{__version__} -> {latest}[/yellow] [dim](run `charmer update`)[/dim]"
+                f"{__version__} -> {latest}[/yellow] [dim](run `charm update`)[/dim]"
             )
 
     return args.func(args)

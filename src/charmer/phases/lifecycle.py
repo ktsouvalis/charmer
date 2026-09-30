@@ -41,7 +41,7 @@ class ShutdownPhase(Phase):
             "it's attached to gerbil's current network namespace, regardless of history",
             "visitors to the dashboard host now see the maintenance page instead of a connection "
             "reset; resource subdomains are not covered (see README 'Ingress')",
-            "if gerbil wasn't running and gets started here, newt agents are recreated (down + up) by `charmer start`",
+            "if gerbil wasn't running and gets started here, newt agents are recreated (down + up) by `charm start`",
         ]
 
     def apply(self, ctx: PhaseContext) -> None:
@@ -63,7 +63,7 @@ class ShutdownPhase(Phase):
         if gerbil_bounced(gerbil_before, gerbil_marker(conn)):
             ctx.state.data["phases"].setdefault("shutdown", {})["newt_redial_pending"] = True
             ctx.state.save()
-            ctx.record(conn.name, "gerbil was (re)started", True, "newt agents get recreated by `charmer start`")
+            ctx.record(conn.name, "gerbil was (re)started", True, "newt agents get recreated by `charm start`")
         # Traefik's `network_mode: service:gerbil` pins it to gerbil's
         # network namespace at container-start time, and Docker never
         # migrates that later: if gerbil was ever recreated/restarted since
@@ -120,7 +120,7 @@ class StartPhase(Phase):
 
     def apply(self, ctx: PhaseContext) -> None:
         if ctx.state.phase_status("shutdown") != "done":
-            raise RuntimeError("refusing: `charmer shutdown` for this site did not last complete gracefully; "
+            raise RuntimeError("refusing: `charm shutdown` for this site did not last complete gracefully; "
                                "nothing to safely start back up")
         conn = ctx.host
         # `up -d` on all four is idempotent; gerbil/traefik/maintenance are

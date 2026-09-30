@@ -20,7 +20,7 @@ Also renders + pushes the "we'll be back" maintenance page and its own tiny
 always-on static-file container (see pangolin-compose.yml.j2 and README
 "Maintenance page"); Traefik's `errors` middleware falls back to it,
 dashboard host only, whenever the pangolin container is unreachable, which
-is exactly the state `charmer shutdown` (lifecycle.py) leaves it in on
+is exactly the state `charm shutdown` (lifecycle.py) leaves it in on
 purpose.
 
 Real-world gotcha, hit on a reused host: 51820/udp can already be bound by
@@ -246,7 +246,7 @@ class PangolinPhase(Phase):
                          f"SMTP password pinned in state, never written to the config file{note}")
         lines.append(f"render + push the maintenance page (nginx:{MAINTENANCE_TAG}, loopback-only): "
                      "Traefik falls back to it on the dashboard host whenever pangolin is unreachable, "
-                     "including during `charmer shutdown` (resource subdomains are not covered, see README 'Ingress')")
+                     "including during `charm shutdown` (resource subdomains are not covered, see README 'Ingress')")
         lines.append("docker compose up -d (compose recreates only services whose definition changed), "
                      "with only what a changed bind-mounted file needs restarted (config.yml -> pangolin, "
                      "before the up; Traefik config/cert -> traefik; pangolin too if postgres was "

@@ -1,4 +1,4 @@
-"""Third-party license manifest, shared by `charmer licenses` (reads
+"""Third-party license manifest, shared by `charm licenses` (reads
 whatever is actually importable right now, pip install or running zipapp
 alike) and tools/build_pyz.sh (reads a pre-zip build directory), so the
 row/render logic lives in one place instead of two copies drifting apart.

@@ -1,5 +1,5 @@
-"""charmer logs: cluster-wide (host + every Newt agent) log viewer over
-SSH, same `config.<site>.monitor.yml` as `charmer monitor`. `--save` writes
+"""charm logs: cluster-wide (host + every Newt agent) log viewer over
+SSH, same `config.<site>.monitor.yml` as `charm monitor`. `--save` writes
 a plain-text report instead of printing to stdout.
 
 Also resolves user<->resource connections from each Newt agent's own
@@ -241,8 +241,8 @@ def run(config_path: str, hours: int, save: str | None, level: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="charmer logs")
-    parser.add_argument("config", help="config.<site>.monitor.yml (emitted by `charmer provision`'s handoff phase)")
+    parser = argparse.ArgumentParser(prog="charm logs")
+    parser.add_argument("config", help="config.<site>.monitor.yml (emitted by `charm provision`'s handoff phase)")
     parser.add_argument("--last", type=int, default=24, metavar="HOURS")
     parser.add_argument("--level", choices=tuple(_GREP_LEVELS), default="warning")
     parser.add_argument("--save", metavar="FILE")

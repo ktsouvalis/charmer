@@ -4,7 +4,7 @@ under charmer, asking the operator for each host.
 A restored database carries sites whose connectors (Newt, or since
 Pangolin 1.23 the Pangolin CLI's `up site`) run on hosts this config has
 never heard of. Their SSH details aren't in the database, so they come from
-the operator, the same questions `charmer init` asks per agent (name, IP,
+the operator, the same questions `charm init` asks per agent (name, IP,
 SSH). For each host charmer connects, finds the connector container
 (fosrl/newt or fosrl/pangolin-cli, newt_ops.discover_connectors()), reads
 its newtId/secret out of `docker inspect`, and checks them against this
@@ -72,7 +72,7 @@ class AdoptNewtPhase(Phase):
         return [
             sites,
             "ask whether the old installation had site connectors to take over; per host: name, IP, "
-            "SSH (the same questions as `charmer init`), nothing taken from the database",
+            "SSH (the same questions as `charm init`), nothing taken from the database",
             "connect, find the fosrl/newt or fosrl/pangolin-cli container, and check its newtId/secret "
             "against this Pangolin (get-token, loopback); ask before adopting each one",
             f"adopting: pin the credentials in state and append the agent to "
@@ -99,10 +99,10 @@ class AdoptNewtPhase(Phase):
             console.print("[yellow]still not managed by charmer: "
                           + ", ".join(repr(n) for n in remaining)
                           + ". Their connectors need a manual restart whenever gerbil restarts; "
-                          "`charmer provision <config> --only adopt_newt` asks again.[/yellow]")
+                          "`charm provision <config> --only adopt_newt` asks again.[/yellow]")
         if self._adopted:
             console.print(f"[dim]{', '.join(self._adopted)} skipped preflight/base: run "
-                          "`charmer provision <config> --replay preflight base` to check and harden "
+                          "`charm provision <config> --replay preflight base` to check and harden "
                           "them like the other hosts.[/dim]")
 
     def _onboard(self, ctx: PhaseContext, remaining: list[str]) -> str | None:

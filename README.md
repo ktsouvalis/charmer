@@ -45,8 +45,8 @@ doesn't bundle, modify, or redistribute any of them.
 | newt | implemented, verified, credentials minted automatically via the Pangolin API; agent provisioned, connected, and a private resource published through it and reached from outside |
 | handoff | implemented, verified, read-only, emits the monitor config |
 
-`shutdown` / `start` / `clean` lifecycle commands and `charmer monitor` /
-`charmer logs` are implemented and have all been run end-to-end against a
+`shutdown` / `start` / `clean` lifecycle commands and `charm monitor` /
+`charm logs` are implemented and have all been run end-to-end against a
 real lab deployment, see [Verification status](#verification-status).
 
 ## Install
@@ -56,16 +56,16 @@ Download the single-file executable from the
 
 ```bash
 sudo apt install python3-cryptography python3-bcrypt python3-nacl
-curl -fLO https://github.com/ktsouvalis/charmer/releases/latest/download/charmer
-chmod +x charmer
-./charmer --version
+curl -fLO https://github.com/ktsouvalis/charmer/releases/latest/download/charm
+chmod +x charm
+./charm --version
 ```
 
 That's the whole installation. The file is a self-contained
 [zipapp](https://docs.python.org/3/library/zipapp.html) carrying charmer and
 its pure-Python dependencies, no virtualenv, no `pip`, no root, nothing to
 uninstall later. Drop it in `~/.local/bin` or `/usr/local/bin` if you want it
-on `PATH`. Later, `charmer check-update` / `charmer update` / `charmer
+on `PATH`. Later, `charm check-update` / `charm update` / `charm
 whats-new` manage upgrades from there.
 
 The three apt packages are paramiko's compiled dependencies; they're
@@ -84,16 +84,16 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 ## Quickstart
 
 ```bash
-charmer init                              # → config.<site>.yml
+charm init                                # → config.<site>.yml
 
 # read the file. this is the review-before-touching-anything step.
 
-charmer provision config.<site>.yml --only preflight   # read-only
-charmer provision config.<site>.yml                    # the full pipeline
+charm provision config.<site>.yml --only preflight     # read-only
+charm provision config.<site>.yml                      # the full pipeline
 ```
 
-(Running from source instead of the zipapp: use `.venv/bin/charmer` in place
-of `charmer` above.)
+(Running from source instead of the zipapp: use `.venv/bin/charm` in place
+of `charm` above.)
 
 Charmer keeps its state next to where you run it: `config.<site>.yml` and
 `.state/<site>.json` (mode `0600`) resolve relative to the working
@@ -103,33 +103,33 @@ explicitly.
 ## Commands
 
 ```
-charmer init [-o FILE]              interactive wizard, writes config.<site>.yml
+charm init [-o FILE]                interactive wizard, writes config.<site>.yml
 
-charmer provision CONFIG            run the phase pipeline (resumable)
+charm provision CONFIG              run the phase pipeline (resumable)
   --only PHASE [PHASE...]              run only the named phase(s)
   --replay PHASE [PHASE...]            re-run specific completed phase(s)
 
-charmer shutdown CONFIG             stop pangolin (postgres, newt agents, gerbil,
+charm shutdown CONFIG               stop pangolin (postgres, newt agents, gerbil,
                                        traefik, and the maintenance page left
                                        running, see "Maintenance page")
-charmer start CONFIG                start it again, refuses without a prior
+charm start CONFIG                  start it again, refuses without a prior
                                        graceful shutdown
 
-charmer clean CONFIG                tear the site down to a bare host (typed-name
+charm clean CONFIG                  tear the site down to a bare host (typed-name
                                        confirmation, every environment)
   --i-know-this-is-production          required additionally in production
 
-charmer status CONFIG               phase progress + pinned state for a config file,
+charm status CONFIG                 phase progress + pinned state for a config file,
                                        local only (reads config + state file, no SSH)
 
-charmer monitor CONFIG.monitor.yml  real-time health dashboard
-charmer logs CONFIG.monitor.yml     cluster-wide log viewer (SSH)
+charm monitor CONFIG.monitor.yml    real-time health dashboard
+charm logs CONFIG.monitor.yml       cluster-wide log viewer (SSH)
   --last HOURS / --level LEVEL / --save FILE
 
-charmer update                      install the latest release (zipapp binary only)
-charmer check-update                check for a newer release without installing it
-charmer whats-new [--all] [--version V]   show the changelog for the installed version
-charmer licenses                    show third-party license info
+charm update                        install the latest release (zipapp binary only)
+charm check-update                  check for a newer release without installing it
+charm whats-new [--all] [--version V]     show the changelog for the installed version
+charm licenses                      show third-party license info
 ```
 
 `CONFIG` means `config.<site>.yml` for every command except `monitor` and
@@ -156,7 +156,7 @@ named phase(s) pending; `--only PHASE` runs just the named phase(s)
 regardless of prior status (useful for `--only preflight` on a live site,
 or re-running `newt` after adding an agent).
 
-`charmer status CONFIG` reads that state file (plus the config) and prints
+`charm status CONFIG` reads that state file (plus the config) and prints
 each phase's status/timestamp, which secrets are pinned (names only, never
 values), per-agent Newt credential-minting status, and the `restore`/`tls`
 summary, without opening any SSH connection. Useful for "where did the last
@@ -299,7 +299,7 @@ alike) to that allow-list instead of leaving it open to anywhere, which is
 what an empty/omitted list still does. Omit it and this phase asks
 interactively instead (Enter to skip), pinning the answer in state so a
 `--replay` never re-asks. This is deliberately unlike [Monitoring](#monitoring)
-below: `charmer monitor`/`logs` already reuse whatever SSH access you have,
+below: `charm monitor`/`logs` already reuse whatever SSH access you have,
 so there's no separate exposed port to scope: `monitor.ips` scopes SSH
 itself, the one channel that access runs over. UFW here stays additive, not
 reconciling: switching from no `monitor.ips` to a populated list clears the
@@ -538,7 +538,7 @@ redial (see [Which restarts need the Newt agents
 redialed](#which-restarts-need-the-newt-agents-redialed)). `adopt_newt`,
 next, offers to bring their hosts under charmer.
 
-`charmer provision config.yml --only restore` scopes a run to just this
+`charm provision config.yml --only restore` scopes a run to just this
 phase regardless of `newt_agents`: `pangolin_phase` doesn't run, so
 `config.yml` is never re-rendered/re-pushed and nothing else
 force-recreates. That's the right way to do a DB-only restore whether or
@@ -554,7 +554,7 @@ never heard of.
 
 The phase lists those sites, then asks whether the old installation had
 connectors to take over. For each host it asks the same questions as
-`charmer init` (name, IP, SSH auth/user/sudo). None of that comes from the
+`charm init` (name, IP, SSH auth/user/sudo). None of that comes from the
 database. It connects and finds the connector container (`fosrl/newt`, or
 `fosrl/pangolin-cli` since Pangolin 1.23), reads its `newtId`/secret from
 `docker inspect` (`NEWT_ID`/`NEWT_SECRET`, `SITE_ID`/`SITE_SECRET`, or the
@@ -621,13 +621,13 @@ would add value for. Revisit only if Newt's own support status changes.
 Like `preflight`, runs without the confirmation gate: nothing here is
 irreversible. Prints the dashboard URL and next steps (no secrets), and
 writes `config.<site>.monitor.yml` on the workstation (mode `0600`) for
-`charmer monitor`/`charmer logs`.
+`charm monitor`/`charm logs`.
 
 ## Ingress
 
 **The constraint:** Pangolin's whole point is publishing arbitrary internal
 resources under their own subdomains: new ones, minted whenever an admin
-adds a resource, long after `charmer provision` has finished. An ingress that pre-decides which certificates exist can't serve
+adds a resource, long after `charm provision` has finished. An ingress that pre-decides which certificates exist can't serve
 domains it doesn't know about yet. So: **Traefik does all TLS/ACME itself,
 for the dashboard domain and every future resource domain, exactly as the
 official Compose does it**: `network_mode: service:gerbil`, wildcard
@@ -650,7 +650,7 @@ or trusted-IP unwrapping needed.)
 
 ## Maintenance page
 
-`charmer shutdown` stops only `pangolin`: `gerbil`, `traefik` (and a tiny
+`charm shutdown` stops only `pangolin`: `gerbil`, `traefik` (and a tiny
 new always-on `maintenance` container, both in
 [pangolin-compose.yml.j2](src/charmer/templates/pangolin-compose.yml.j2))
 are deliberately left running. Gerbil in particular has to stay up: Traefik
@@ -674,7 +674,7 @@ is wired onto the dashboard's routers to catch 502/503/504 (exactly what
 a dead `pangolin` backend produces) and fall back to a static "we'll be
 back" page served by `maintenance` instead, optionally with your own logo
 (`maintenance.logo` in the config, inlined as a data URI so the page needs
-no other assets, see `config.example.yml`). `charmer init` asks for an
+no other assets, see `config.example.yml`). `charm init` asks for an
 organization name and defaults `maintenance.message` to a Greek line built
 from it (`{org}, θα επιστρέψουμε σε λίγο.`) instead of the English
 fallback in `config.py`; it's plain text in the generated config file, so
@@ -708,7 +708,7 @@ still see a hard failure, not the maintenance page. Closing that gap would
 require Pangolin itself to support a maintenance mode: out of charmer's
 hands.
 
-`charmer start` brings `pangolin`/`gerbil` back (and is idempotent on
+`charm start` brings `pangolin`/`gerbil` back (and is idempotent on
 `traefik`/`maintenance`, so it self-heals either one if they'd gone down
 for an unrelated reason too).
 
@@ -750,7 +750,7 @@ is on you (e.g. an SSH tunnel), not something this repo wires up.
 Pangolin CE has no way to seed an API key at deploy time so there is one
 genuinely irreducible manual step: complete `/auth/initial-setup` in a
 browser once, then mint a **Root API Key** (Server Admin → API Keys) once.
-`charmer provision` asks for that key (hidden input) and your organization
+`charm provision` asks for that key (hidden input) and your organization
 ID (Organization Settings → General) the first time the `newt` phase runs,
 pins both in state (`0600`, never written to the config file), and never
 asks again: every agent after that is fully automatic.
@@ -785,19 +785,19 @@ every agent whenever `tls.provider: self_signed`. `acme`/`import` need no
 such step: real CA chains Newt's default trust store already recognizes.
 Because `newt`'s phase state was already marked `done` (the container was
 "running", just crash-retry-looping) before this fix existed, picking it up
-on an already-provisioned site needs `charmer provision <config> --only
+on an already-provisioned site needs `charm provision <config> --only
 newt` to force a re-apply.
 
 ## Monitoring
 
-`charmer monitor`/`charmer logs` read `config.<site>.monitor.yml` (from
+`charm monitor`/`charm logs` read `config.<site>.monitor.yml` (from
 `handoff`), not the site's own config. Charmer's whole footprint is small enough
 that the same SSH access `provision` used is what monitoring uses too:
 `docker inspect` over SSH, not extra public HTTP ports (stub_status, stats
 pages) opened just for a dashboard to poll. One less thing exposed to the
 internet, one less UFW rule to keep in sync.
 
-`charmer monitor` is a Textual TUI: a "PANGOLIN HOST" panel (per-container
+`charm monitor` is a Textual TUI: a "PANGOLIN HOST" panel (per-container
 health: Pangolin/Gerbil/Traefik/Postgres) and a "NEWT AGENTS" panel (each
 agent's `newt` container state), each with a live status dot in its border
 title, refreshed every `--interval` seconds (default 15). `r` forces an
@@ -810,7 +810,7 @@ logs` pulls `docker logs` from every container on every host in parallel,
 `--level`-filtered the same way `journalctl -p` filters, `--save` to write
 a plain-text report instead of printing.
 
-`charmer logs` also always writes `<site>_access.csv` (or
+`charm logs` also always writes `<site>_access.csv` (or
 `<save-file>_access.csv` with `--save`): resolved user<->resource
 connection history, one row per session (Agent, Agent IP, Started, Ended,
 Duration, Who, Where, Proto, Destination). Source: each Newt agent's own
@@ -904,7 +904,7 @@ reload path on Ubuntu 24.04's default socket activation.
 - HA is explicitly out of scope for the pipeline: official Pangolin CE has
   no self-hosted HA topology (it's an Enterprise-only capability). If that changes upstream, or if a
   warm-standby pattern similar to what a 3-node Pangolin HA deployment would need, becomes worth building by hand, it's a separate future project, not an assumption baked into this pipeline.
-- `charmer clean`'s Newt-side teardown removes the agent's container and
+- `charm clean`'s Newt-side teardown removes the agent's container and
   compose bundle but does not delete its Pangolin site server-side (the
   integration API can do this; not wired up yet).
 - Encrypt secrets at rest in the state file (age/sops or an OS keyring)
@@ -929,9 +929,9 @@ following separately licensed projects:
 
 Charmer's own Python dependencies (paramiko, PyYAML, Jinja2, rich,
 cryptography, textual and their own dependencies) are each MIT/BSD/Apache-2.0,
-except paramiko, which is LGPL-2.1. The `charmer` release zipapp bundles the
+except paramiko, which is LGPL-2.1. The `charm` release zipapp bundles the
 pure-Python ones (paramiko among them) with their source and license text
 included; each release publishes a `THIRD_PARTY_LICENSES.md` alongside the
-binary indexing every bundled package's license. `charmer licenses` prints
+binary indexing every bundled package's license. `charm licenses` prints
 the same listing from whatever is actually installed/bundled in the copy
 you're running.

@@ -1,4 +1,4 @@
-"""charmer monitor: real-time TUI dashboard for one Pangolin host + its
+"""charm monitor: real-time TUI dashboard for one Pangolin host + its
 Newt agents.
 
 Built on Textual, in the same visual idiom as this rebuild's predecessor
@@ -61,7 +61,7 @@ class MonitorNode:
 
 def _gather_credentials(cfg: dict) -> dict[str, tuple[str | None, str | None]]:
     """Prompt once per distinct host for whatever SSH/sudo password its
-    NodeConn will need, same accounts `charmer provision` already
+    NodeConn will need, same accounts `charm provision` already
     authenticated against, but the monitor config never carries secrets, so
     this session has to ask again instead of assuming passwordless sudo.
     Done up front, before the Textual app takes over the terminal, since
@@ -207,8 +207,8 @@ def run(config_path: str, once: bool = False, interval: int = DEFAULT_INTERVAL) 
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="charmer monitor")
-    parser.add_argument("config", help="config.<site>.monitor.yml (emitted by `charmer provision`'s handoff phase)")
+    parser = argparse.ArgumentParser(prog="charm monitor")
+    parser.add_argument("config", help="config.<site>.monitor.yml (emitted by `charm provision`'s handoff phase)")
     parser.add_argument("--once", action="store_true", help="print one snapshot and exit")
     parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL)
     args = parser.parse_args(argv)

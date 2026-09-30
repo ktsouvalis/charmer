@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+- **The command is now `charm`.** The executable (release zipapp asset,
+  `pip install` console script, `.venv/bin/charm`) and every hint charmer
+  prints were renamed from `charmer` to `charm`; the project, Python
+  package, repo, and the `charmer monitor` ufw rule comment keep their
+  names, so existing firewall rules still match. Releases also ship a
+  byte-identical `charmer` asset so binaries from before the rename can
+  still `update`; an old binary updates in place under its old filename,
+  so rename it yourself (`mv /usr/local/bin/charmer /usr/local/bin/charm`).
+
 ## [0.12.0] - 2026-09-28
 
 - **Pangolin's integration API is on by default.** It used to be enabled

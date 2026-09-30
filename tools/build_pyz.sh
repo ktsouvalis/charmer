@@ -2,7 +2,7 @@
 #
 # Build the single-file charmer executable (a PEP 441 zipapp).
 #
-#   ./tools/build_pyz.sh          -> dist/charmer
+#   ./tools/build_pyz.sh          -> dist/charm
 #
 # The result is one executable file carrying charmer plus its pure-Python
 # dependencies (paramiko, PyYAML, Jinja2, rich, textual and their transitive
@@ -26,7 +26,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="$ROOT/build/pyz"
 DIST="$ROOT/dist"
-OUT="$DIST/charmer"
+OUT="$DIST/charm"
 
 # Deterministic timestamps so two builds of the same commit produce the same
 # bytes. Falls back to the commit date, then to a fixed epoch.
@@ -113,7 +113,7 @@ echo "==> writing third-party license manifest"
 # license texts themselves already travel inside the archive (see above),
 # this is the human-readable index of what's in there and under what terms,
 # shipped alongside the binary as dist/THIRD_PARTY_LICENSES.md. Shares its
-# row/render logic with `charmer licenses` (charmer/licenses.py) so the two
+# row/render logic with `charm licenses` (charmer/licenses.py) so the two
 # listings can't drift apart.
 NOTE="charmer (MIT) is distributed as a single-file zipapp that also carries the pure-Python packages it depends on, their source ships inside this archive, not just charmer's own. Each package's full license text ships alongside it, under the paths listed below; this file is the index, not a substitute for those texts.
 

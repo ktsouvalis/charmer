@@ -218,7 +218,7 @@ def announce_unmanaged(ctx: PhaseContext, why: str, hint: str = "") -> None:
     how = ("on each one's own host run `docker compose down && docker compose up -d` in its compose "
            "directory (more reliable than `restart`), or `systemctl restart <unit>` for a service install")
     hint = hint or ("To have charmer manage one (and restart it automatically next time), add its "
-                    "host to newt_agents, or run `charmer provision <config> --only adopt_newt` "
+                    "host to newt_agents, or run `charm provision <config> --only adopt_newt` "
                     "after a restore.")
     others = unmanaged_sites(ctx)
     if others is None:

@@ -69,11 +69,11 @@ jobs:
 
       - name: Verify the artifact
         run: |
-          ./dist/charmer --version
-          ./dist/charmer --help > /dev/null
+          ./dist/charm --version
+          ./dist/charm --help > /dev/null
           python - <<'EOF'
           import sys
-          sys.path.insert(0, "dist/charmer")
+          sys.path.insert(0, "dist/charm")
           from importlib import resources
           n = sum(1 for p in resources.files("charmer.templates").iterdir()
                   if p.name.endswith(".j2"))
@@ -82,10 +82,16 @@ jobs:
           print(f"{n} templates readable from the zipapp")
           EOF
 
+      # Byte-identical copy under the pre-rename name: binaries from before
+      # the charmer -> charm rename look for a `charmer` asset (and its
+      # SHA256SUMS line) when they self-update.
+      - name: Legacy asset name
+        run: cp dist/charm dist/charmer
+
       - name: Checksum
         working-directory: dist
         run: |
-          sha256sum charmer THIRD_PARTY_LICENSES.md *.whl *.tar.gz > SHA256SUMS
+          sha256sum charm charmer THIRD_PARTY_LICENSES.md *.whl *.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       - name: Extract release notes from CHANGELOG.md
@@ -107,9 +113,9 @@ jobs:
 
           ```
           sudo apt install python3-cryptography python3-bcrypt python3-nacl
-          curl -fLO https://github.com/ktsouvalis/charmer/releases/download/TAG/charmer
-          chmod +x charmer
-          ./charmer --version
+          curl -fLO https://github.com/ktsouvalis/charmer/releases/download/TAG/charm
+          chmod +x charm
+          ./charm --version
           ```
 
           Verify with `sha256sum -c SHA256SUMS`. Reproducible on Python 3.10:
@@ -127,6 +133,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "charmer ${GITHUB_REF_NAME#v}" \
             --notes-file release-notes.md \
+            dist/charm \
             dist/charmer \
             dist/THIRD_PARTY_LICENSES.md \
             dist/SHA256SUMS \

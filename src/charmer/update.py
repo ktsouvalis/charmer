@@ -8,7 +8,7 @@ path (git pull / pip install -U) and is left alone.
 The version check (`check_for_update`) is cheap and safe to call on every
 invocation: it is cached for CHECK_INTERVAL_SECONDS and swallows every
 network/parsing error, since a flaky connection or GitHub outage must never
-break an unrelated `charmer provision` run.
+break an unrelated `charm provision` run.
 """
 
 from __future__ import annotations
@@ -28,6 +28,9 @@ from pathlib import Path
 from rich.console import Console
 
 REPO = "ktsouvalis/charmer"
+# The zipapp release asset. Releases also carry a byte-identical `charmer`
+# copy so pre-rename binaries (which look for that name) can still update.
+ASSET_NAME = "charm"
 API_LATEST_RELEASE = f"https://api.github.com/repos/{REPO}/releases/latest"
 USER_AGENT = "charmer-cli"
 
@@ -131,7 +134,7 @@ def check_update_now(current_version: str) -> int:
     if _is_newer(latest, current_version):
         console.print(
             f"[yellow]a new charmer release is available: "
-            f"{current_version} -> {latest}[/yellow] [dim](run `charmer update`)[/dim]"
+            f"{current_version} -> {latest}[/yellow] [dim](run `charm update`)[/dim]"
         )
         return 1
 
@@ -143,8 +146,8 @@ def self_update(current_version: str) -> int:
     exe_path = _running_executable_path()
     if exe_path is None or not zipfile.is_zipfile(exe_path):
         console.print(
-            "[yellow]charmer update only supports the release zipapp binary "
-            "(the single `charmer` file from GitHub releases).[/yellow]"
+            "[yellow]charm update only supports the release zipapp binary "
+            "(the single `charm` file from GitHub releases).[/yellow]"
         )
         console.print(
             "This looks like a source/pip install, use `git pull` or "
@@ -168,10 +171,10 @@ def self_update(current_version: str) -> int:
         return 0
 
     assets = {a.get("name"): a.get("browser_download_url") for a in release.get("assets", [])}
-    binary_url = assets.get("charmer")
+    binary_url = assets.get(ASSET_NAME)
     sums_url = assets.get("SHA256SUMS")
     if not binary_url or not sums_url:
-        console.print(f"[red]release {latest} is missing the `charmer` binary or SHA256SUMS asset.[/red]")
+        console.print(f"[red]release {latest} is missing the `{ASSET_NAME}` binary or SHA256SUMS asset.[/red]")
         return 1
 
     console.print(f"downloading charmer {latest}...")
@@ -185,11 +188,11 @@ def self_update(current_version: str) -> int:
     expected = None
     for line in sums_text.splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[1] == "charmer":
+        if len(parts) == 2 and parts[1] == ASSET_NAME:
             expected = parts[0]
             break
     if expected is None:
-        console.print("[red]SHA256SUMS does not list the `charmer` binary, refusing to install.[/red]")
+        console.print(f"[red]SHA256SUMS does not list the `{ASSET_NAME}` binary, refusing to install.[/red]")
         return 1
 
     actual = hashlib.sha256(binary_data).hexdigest()

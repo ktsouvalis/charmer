@@ -24,7 +24,7 @@ dependencies = [
 test = ["pytest>=8,<9"]
 
 [project.scripts]
-charmer = "charmer.cli:main"
+charm = "charmer.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

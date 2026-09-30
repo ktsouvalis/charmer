@@ -1,7 +1,7 @@
 """handoff: the last phase, and the only one besides preflight that touches
 nothing on any host. Read-only, never prompts: prints the landing card and
-emits `config.<site>.monitor.yml` on the workstation for `charmer monitor`/
-`charmer logs`, filled from the site config + pinned state so the two tools
+emits `config.<site>.monitor.yml` on the workstation for `charm monitor`/
+`charm logs`, filled from the site config + pinned state so the two tools
 never drift from what was actually provisioned.
 """
 
@@ -22,7 +22,7 @@ class HandoffPhase(Phase):
     def plan(self, ctx: PhaseContext) -> list[str]:
         return [
             "print the dashboard URL and next steps (no secrets)",
-            f"emit config.{ctx.cfg.name}.monitor.yml for `charmer monitor`/`charmer logs`",
+            f"emit config.{ctx.cfg.name}.monitor.yml for `charm monitor`/`charm logs`",
         ]
 
     def apply(self, ctx: PhaseContext) -> None:
@@ -66,8 +66,8 @@ class HandoffPhase(Phase):
             print("Newt agent credentials were minted automatically via the integration API "
                  "(see the newt phase); nothing further needed per agent.")
         print(f"monitor config: {path}")
-        print(f"next: charmer monitor {path}")
-        print(f"      charmer logs {path}")
+        print(f"next: charm monitor {path}")
+        print(f"      charm logs {path}")
 
     def verify(self, ctx: PhaseContext) -> bool:
         raw_path = ctx.state.data["generated"].get("monitor_config_path", "")

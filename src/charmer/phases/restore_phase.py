@@ -12,7 +12,7 @@ container (down + up) for that reason alone (newt_ops.redial(): no fresh
 credentials minted, no compose changes). An agent with no `/opt/newt` bundle yet is
 skipped, not an error. This is best-effort, not gating: an agent that
 doesn't come back is recorded as a warning, since the restore itself
-already succeeded and `charmer monitor`/`logs` is where ongoing agent
+already succeeded and `charm monitor`/`logs` is where ongoing agent
 health belongs. Every other site in the restored database is listed for a
 manual restart; adopt_newt (the next phase) offers to bring their hosts
 under charmer.

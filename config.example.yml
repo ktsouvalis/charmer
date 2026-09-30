@@ -72,12 +72,12 @@ tls:
   #   privkey: ./certs/privkey.pem
 
 # The "we'll be back" page Traefik falls back to on the dashboard host
-# whenever pangolin is unreachable, including during `charmer shutdown`,
+# whenever pangolin is unreachable, including during `charm shutdown`,
 # which leaves traefik running for exactly this. Dashboard only; resource
 # subdomains aren't covered, see README "Ingress". Both keys are optional.
 # maintenance:
 #   logo: ./uop_logo.png            # .png/.jpg/.jpeg/.svg, inlined into the page
-#   message: "We'll be back shortly."   # `charmer init` asks for an organization
+#   message: "We'll be back shortly."   # `charm init` asks for an organization
                                          # name and defaults this to Greek instead
 
 # Pangolin has no OIDC config.yml key: an external identity provider
@@ -86,7 +86,7 @@ tls:
 # provisioning. Nothing to set here.
 
 # Pangolin config.yml's `email:` section, password reset / invite emails.
-# smtp_pass is NOT set here: `charmer provision` asks for it once (hidden)
+# smtp_pass is NOT set here: `charm provision` asks for it once (hidden)
 # the first time this phase runs and pins it in local state, same treatment
 # as the Newt Root API key.
 # smtp:

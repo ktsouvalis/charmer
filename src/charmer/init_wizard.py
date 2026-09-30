@@ -1,4 +1,4 @@
-"""Interactive `charmer init` wizard: answers get materialized into a
+"""Interactive `charm init` wizard: answers get materialized into a
 reviewable `config.<site>.yml`, the same "answer once, review before
 touching anything" shape as akropolis's `init`.
 """
@@ -18,7 +18,7 @@ from .config import CONFIG_SCHEMA_VERSION, VALID_SSH_AUTH, VALID_TLS_PROVIDERS
 # so filling it in is copy/uncomment/edit, not guesswork.
 NEWT_AGENTS_EXAMPLE = """\
 # No Newt agents yet, add them here whenever you're ready (see README
-# "newt") and re-run `charmer provision`, no need to redo init. Each agent
+# "newt") and re-run `charm provision`, no need to redo init. Each agent
 # is a fully separate SSH target, never assumed to be a VM, LXC container,
 # or physical host. Example:
 # newt_agents:
@@ -117,7 +117,7 @@ def run_wizard(output: str | None = None) -> Path:
         base_domain = _ask("Base domain for published resources (required: Pangolin CE "
                            "refuses to start without at least one domain configured)")
 
-    print("\n-- Maintenance page ('we'll be back', shown on the dashboard host during `charmer shutdown`) --")
+    print("\n-- Maintenance page ('we'll be back', shown on the dashboard host during `charm shutdown`) --")
     org_name = _ask("Organization name (Enter to skip)")
     maintenance_message = (f"{org_name}, θα επιστρέψουμε σε λίγο." if org_name
                            else "Θα επιστρέψουμε σε λίγο.")
@@ -132,7 +132,7 @@ def run_wizard(output: str | None = None) -> Path:
         smtp["no_reply"] = _ask("  \"From\" address", smtp["user"] or "")
         smtp["secure"] = _ask_yn("  Use implicit TLS/SSL (port 465)", default=False)
         smtp["tls_reject_unauthorized"] = _ask_yn("  Reject invalid TLS certs", default=True)
-        print("  (the SMTP password is NOT stored here: `charmer provision` asks for it once, "
+        print("  (the SMTP password is NOT stored here: `charm provision` asks for it once, "
               "hidden, and pins it in local state)")
 
     print("\n-- Newt agents --")
