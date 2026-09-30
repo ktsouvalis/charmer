@@ -209,6 +209,28 @@ def _get(d: dict, path: str, default=None):
     return cur
 
 
+def _anchor(d: dict, key: str, base: Path) -> None:
+    """Rewrite d[key] (a local file path) to be absolute: `~` expanded, and a
+    relative path taken relative to the config file's directory, not the
+    working directory. Otherwise running charm from another directory reads
+    (or, for the state file, writes) a different file than the one the config
+    means, e.g. another tool's `.state/<site>.json` in that directory."""
+    if isinstance(d, dict) and d.get(key):
+        d[key] = str(base / Path(os.path.expanduser(str(d[key]))))
+
+
+def _anchor_local_paths(raw: dict, base: Path) -> None:
+    for sect, key in (("provision", "state_file"), ("restore", "postgres_dump"),
+                      ("maintenance", "logo"), ("ssh", "key_file")):
+        _anchor(raw.get(sect), key, base)
+    tls_import = (raw.get("tls") or {}).get("import") if isinstance(raw.get("tls"), dict) else None
+    for key in ("fullchain", "privkey"):
+        _anchor(tls_import, key, base)
+    for a in raw.get("newt_agents") or []:
+        if isinstance(a, dict):
+            _anchor(a.get("ssh"), "key_file", base)
+
+
 def _validate_ssh(raw: dict, label: str, problems: list[str]) -> SSHTarget:
     auth = _get(raw, "auth", "agent")
     key_file = _get(raw, "key_file")
@@ -265,6 +287,8 @@ def load(path: str | Path) -> SiteConfig:
             f"site.config_version is {raw_version}, this charmer only understands up to "
             f"{CONFIG_SCHEMA_VERSION}. This config was written for a newer charmer release."
         ])
+
+    _anchor_local_paths(raw, path.resolve().parent)
 
     problems: list[str] = []
 
@@ -508,7 +532,7 @@ def load(path: str | Path) -> SiteConfig:
     if problems:
         raise ConfigError(problems)
 
-    state_file = Path(_get(raw, "provision.state_file", f".state/{name}.json"))
+    state_file = Path(_get(raw, "provision.state_file") or path.resolve().parent / ".state" / f"{name}.json")
 
     return SiteConfig(
         name=name,

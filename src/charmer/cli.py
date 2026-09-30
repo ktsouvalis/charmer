@@ -113,6 +113,14 @@ def _load_or_die(config_path: str) -> SiteConfig:
         raise SystemExit(2)
 
 
+def _state_or_die(cfg: SiteConfig) -> State:
+    try:
+        return State(cfg.state_file, cfg.name)
+    except RuntimeError as exc:
+        console.print(f"[red]state problem:[/red] {exc}")
+        raise SystemExit(2)
+
+
 def _connected_command(config_path: str, command: str):
     """Shared setup for provision/shutdown/start: load config, open a
     transcript, build the fleet, pre-authenticate. Returns (cfg, state,
@@ -120,7 +128,7 @@ def _connected_command(config_path: str, command: str):
     from .transcript import Transcript
 
     cfg = _load_or_die(config_path)
-    state = State(cfg.state_file, cfg.name)
+    state = _state_or_die(cfg)
     transcript = Transcript(_transcript_path(cfg, command))
     console.print(f"[dim]transcript: {transcript.path} (every command run on every host this "
                  "session, mode 0600)[/dim]")
@@ -192,7 +200,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
 
     from .transcript import Transcript
 
-    state = State(cfg.state_file, cfg.name)
+    state = _state_or_die(cfg)
     transcript = Transcript(_transcript_path(cfg, "clean"))
     console.print(f"[dim]transcript: {transcript.path} (mode 0600)[/dim]")
     fleet = _build_fleet(cfg, transcript)
@@ -239,7 +247,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     """Local-only: no SSH, no fleet, just config + the state file on disk.
     Answers "where is this site in the pipeline" without touching the network."""
     cfg = _load_or_die(args.config)
-    state = State(cfg.state_file, cfg.name)
+    state = _state_or_die(cfg)
     generated = state.data.get("generated", {})
 
     console.print(f"[bold]{cfg.name}[/bold] ({cfg.environment}) - {cfg.dashboard_host} @ {cfg.host_ip}")

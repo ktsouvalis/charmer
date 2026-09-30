@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.13.0] - 2026-09-30
 
 - **The command is now `charm`.** The executable (release zipapp asset,
   `pip install` console script, `.venv/bin/charm`) and every hint charmer
@@ -10,6 +10,22 @@
   byte-identical `charmer` asset so binaries from before the rename can
   still `update`; an old binary updates in place under its old filename,
   so rename it yourself (`mv /usr/local/bin/charmer /usr/local/bin/charm`).
+- **Local paths in the config resolve against the config file's
+  directory, not the working directory.** `provision.state_file` (and the
+  default `.state/<site>.json`), `restore.postgres_dump`,
+  `maintenance.logo`, `tls.import.*` and ssh `key_file` used to be relative
+  to wherever charmer was run from. Running `status` for a charmer config
+  from an akropolis directory read akropolis's same-named
+  `.state/<site>.json`, which has the same layout, and showed its
+  `preflight`/`base`/`restore`/`handoff` as done. A `provision` from there
+  would have skipped those phases and written into akropolis's state. If you
+  kept a site's `.state/` somewhere other than next to its config, move it
+  there or set `provision.state_file` to an absolute path.
+- **State files are stamped `"tool": "charmer"`, and foreign ones are
+  refused.** A file stamped by another tool, or an unstamped one whose phase
+  names aren't all charmer's (akropolis's `etcd`, `patroni`, ...), stops
+  the command with an error instead of being read or overwritten.
+  Existing charmer state files get stamped on their next save.
 
 ## [0.12.0] - 2026-09-28
 

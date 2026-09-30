@@ -265,3 +265,24 @@ def test_restore_utility_subnet_prefix_rejected(tmp_path, value):
         "  destructive: false", f"  destructive: false\n  utility_subnet_prefix: {value}", 1))
     with pytest.raises(ConfigError, match="utility_subnet_prefix must be"):
         load(path)
+
+
+def test_local_paths_resolve_against_config_dir_not_cwd(tmp_path, monkeypatch):
+    site = tmp_path / "site"
+    site.mkdir()
+    path = site / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "postgres_dump: null", "postgres_dump: ./backups/pangolin.sql.gz"))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    cfg = load(Path("../site/config.yml"))
+    assert cfg.state_file == site / ".state" / "pangolin-uop.json"
+    assert cfg.restore_dump == str(site / "backups" / "pangolin.sql.gz")
+
+
+def test_absolute_state_file_is_kept(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace(
+        "state_file: .state/pangolin-uop.json", "state_file: /var/lib/charmer/pangolin-uop.json"))
+    assert load(path).state_file == Path("/var/lib/charmer/pangolin-uop.json")

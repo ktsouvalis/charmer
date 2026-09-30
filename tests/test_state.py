@@ -1,3 +1,5 @@
+import pytest
+
 from charmer.state import State
 
 
@@ -31,3 +33,33 @@ def test_state_refuses_mismatched_site(tmp_path):
         assert False, "expected RuntimeError"
     except RuntimeError as exc:
         assert "site-a" in str(exc)
+
+
+def _write(path, data):
+    import json
+    path.write_text(json.dumps(data))
+
+
+def test_state_refuses_akropolis_state_file(tmp_path):
+    # Same shape and default path as akropolis; only the phase names differ.
+    path = tmp_path / "state.json"
+    _write(path, {"site": "site", "generated": {},
+                  "phases": {"preflight": {"status": "done"}, "etcd": {"status": "done"}}})
+    with pytest.raises(RuntimeError, match="etcd"):
+        State(path, "site")
+
+
+def test_state_refuses_other_tool_stamp(tmp_path):
+    path = tmp_path / "state.json"
+    _write(path, {"tool": "akropolis", "site": "site", "phases": {}, "generated": {}})
+    with pytest.raises(RuntimeError, match="akropolis"):
+        State(path, "site")
+
+
+def test_unstamped_charmer_state_is_accepted_and_stamped(tmp_path):
+    import json
+    path = tmp_path / "state.json"
+    _write(path, {"site": "site", "generated": {}, "phases": {"pangolin": {"status": "done"}}})
+    state = State(path, "site")
+    state.mark_phase("handoff", "done")
+    assert json.loads(path.read_text())["tool"] == "charmer"

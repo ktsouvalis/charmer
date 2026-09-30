@@ -20,19 +20,41 @@ from pathlib import Path
 from typing import Callable
 
 
+TOOL = "charmer"
+
+# Every phase name charmer has ever written under "phases". akropolis uses the
+# same state-file shape (and the same `.state/<site>.json` default), so a file
+# without the "tool" stamp (written before it existed) is only accepted if its
+# phase names are all charmer's; akropolis's etcd/patroni/nginx/... are not.
+KNOWN_PHASES = frozenset({"preflight", "base", "pangolin", "restore", "adopt_newt",
+                          "newt", "handoff", "shutdown", "start", "clean"})
+
+
 class State:
     def __init__(self, path: Path, site_name: str):
         self.path = Path(path)
         self.site_name = site_name
-        self.data: dict = {"site": site_name, "phases": {}, "generated": {}}
+        self.data: dict = {"tool": TOOL, "site": site_name, "phases": {}, "generated": {}}
         if self.path.exists():
             with open(self.path) as f:
                 self.data = json.load(f)
+            tool = self.data.get("tool")
+            foreign = sorted(set(self.data.get("phases", {})) - KNOWN_PHASES)
+            if tool is not None and tool != TOOL:
+                raise RuntimeError(
+                    f"State file {self.path} was written by {tool!r}, not charmer. "
+                    "Refusing to read or overwrite another tool's state.")
+            if tool is None and foreign:
+                raise RuntimeError(
+                    f"State file {self.path} has phases charmer never writes ({', '.join(foreign)}): "
+                    "it looks like another tool's state (akropolis uses the same layout). "
+                    "Refusing to read or overwrite it.")
             if self.data.get("site") != site_name:
                 raise RuntimeError(
                     f"State file {self.path} belongs to site {self.data.get('site')!r}, "
                     f"not {site_name!r}. Refusing to mix state between sites."
                 )
+            self.data["tool"] = TOOL  # stamp pre-existing charmer files on their next save
 
     # --- phases -------------------------------------------------------------
     def phase_status(self, name: str) -> str:

@@ -95,10 +95,14 @@ charm provision config.<site>.yml                      # the full pipeline
 (Running from source instead of the zipapp: use `.venv/bin/charm` in place
 of `charm` above.)
 
-Charmer keeps its state next to where you run it: `config.<site>.yml` and
-`.state/<site>.json` (mode `0600`) resolve relative to the working
-directory. Give each site its own directory, or set `provision.state_file`
-explicitly.
+Charmer keeps its state next to the config file: a relative
+`provision.state_file` (default `.state/<site>.json`, mode `0600`), and
+every other local path in the config (`restore.postgres_dump`,
+`maintenance.logo`, `tls.import.*`, ssh `key_file`), resolves against the
+directory `config.<site>.yml` lives in, not the working directory, so
+`charm status /path/to/config.<site>.yml` works from anywhere. A state file
+charmer didn't write (e.g. akropolis's, which uses the same layout) is
+refused rather than read or overwritten.
 
 ## Commands
 
