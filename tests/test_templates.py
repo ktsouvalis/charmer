@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import yaml
 
 from charmer.remote import render
@@ -218,7 +220,7 @@ def test_dynamic_config_wires_maintenance_errors_on_dashboard_routers():
 def test_newt_compose_is_host_type_agnostic():
     rendered = render("newt-compose.yml.j2", image_tag="1.5.0", pangolin_endpoint="https://p.example",
                       newt_id="id123", newt_secret="secret123", tun_device="/dev/net/tun",
-                      docker_socket=False, skip_tls_verify=False)
+                      docker_socket=False, skip_tls_verify=False, pangolin_host="p.example", pangolin_ip=None)
     doc = yaml.safe_load(rendered)
     svc = doc["services"]["newt"]
     assert svc["image"] == "docker.io/fosrl/newt:1.5.0"
@@ -245,7 +247,7 @@ def test_maintenance_page_embeds_logo_data_uri():
 def test_newt_compose_mounts_docker_socket_when_requested():
     rendered = render("newt-compose.yml.j2", image_tag="1.5.0", pangolin_endpoint="https://p.example",
                       newt_id="id", newt_secret="secret", tun_device="/dev/net/tun", docker_socket=True,
-                      skip_tls_verify=False)
+                      skip_tls_verify=False, pangolin_host="p.example", pangolin_ip=None)
     doc = yaml.safe_load(rendered)
     assert "/var/run/docker.sock:/var/run/docker.sock:ro" in doc["services"]["newt"]["volumes"]
 
@@ -253,6 +255,33 @@ def test_newt_compose_mounts_docker_socket_when_requested():
 def test_newt_compose_skips_tls_verify_for_self_signed():
     rendered = render("newt-compose.yml.j2", image_tag="1.5.0", pangolin_endpoint="https://p.example",
                       newt_id="id", newt_secret="secret", tun_device="/dev/net/tun", docker_socket=False,
-                      skip_tls_verify=True)
+                      skip_tls_verify=True, pangolin_host="p.example", pangolin_ip=None)
     doc = yaml.safe_load(rendered)
     assert doc["services"]["newt"]["environment"]["SKIP_TLS_VERIFY"] == "true"
+
+
+def test_newt_compose_has_no_extra_hosts_by_default():
+    rendered = render("newt-compose.yml.j2", image_tag="1.5.0", pangolin_endpoint="https://p.example",
+                      newt_id="id", newt_secret="secret", tun_device="/dev/net/tun", docker_socket=False,
+                      skip_tls_verify=False, pangolin_host="p.example", pangolin_ip=None)
+    assert "extra_hosts" not in yaml.safe_load(rendered)["services"]["newt"]
+
+
+def test_newt_compose_pins_endpoint_host_to_host_ip():
+    from types import SimpleNamespace
+
+    from charmer.config import load
+    from charmer.phases.newt_phase import NewtPhase
+
+    cfg = load(Path(__file__).parents[1] / "config.example.yml")
+    agent = SimpleNamespace(image_tag="1.17.0", tun_device="/dev/net/tun", docker_socket=False,
+                            pangolin_via_host_ip=True)
+    doc = yaml.safe_load(NewtPhase()._render(agent, cfg, "id", "secret", skip_tls_verify=False))
+    svc = doc["services"]["newt"]
+    # the pinned name is the one PANGOLIN_ENDPOINT carries, never hard-coded
+    assert svc["environment"]["PANGOLIN_ENDPOINT"] == f"https://{cfg.dashboard_host}"
+    assert svc["extra_hosts"] == [f"{cfg.dashboard_host}:{cfg.host_ip}"]
+
+    agent.pangolin_via_host_ip = False
+    doc = yaml.safe_load(NewtPhase()._render(agent, cfg, "id", "secret", skip_tls_verify=False))
+    assert "extra_hosts" not in doc["services"]["newt"]

@@ -83,6 +83,17 @@ def parse_connector_credentials(config: dict) -> dict | None:
             "docker_socket": bool(env.get("DOCKER_SOCKET") or flags.get("docker-socket"))}
 
 
+def extra_host_ip(extra_hosts: list[str] | None, hostname: str) -> str | None:
+    """The address `hostname` is pinned to in a container's
+    HostConfig.ExtraHosts ("host:ip", or "host=ip" from newer Docker), else None."""
+    for entry in extra_hosts or []:
+        sep = "=" if "=" in entry else ":"
+        host, _, ip = entry.partition(sep)
+        if host == hostname and ip:
+            return ip.strip("[]")
+    return None
+
+
 _NEWT_AGENTS_RE = re.compile(r"^newt_agents:[ \t]*(\[\])?[ \t]*(#.*)?$")
 
 
@@ -159,7 +170,7 @@ def check_credentials(ctx: PhaseContext, newt_id: str, secret: str) -> bool | No
 
 def discover_connectors(conn) -> list[dict]:
     """Every site-connector container on `conn`'s host (any state):
-    {id, name, image, kind, state, working_dir, creds}. Read-only."""
+    {id, name, image, kind, state, working_dir, creds, extra_hosts}. Read-only."""
     fmt = ("{{.ID}}|{{.Image}}|{{.Names}}|{{.State}}|"
            '{{.Label "com.docker.compose.project.working_dir"}}')
     r = conn.run(f"docker ps -a --no-trunc --format {shlex.quote(fmt)}")
@@ -174,8 +185,13 @@ def discover_connectors(conn) -> list[dict]:
             creds = parse_connector_credentials(json.loads(insp.out)) if insp.ok else None
         except json.JSONDecodeError:
             creds = None
+        hosts = conn.run(f"docker inspect --format '{{{{json .HostConfig.ExtraHosts}}}}' {shlex.quote(cid)}")
+        try:
+            extra_hosts = (json.loads(hosts.out) or []) if hosts.ok else []
+        except json.JSONDecodeError:
+            extra_hosts = []
         found.append({"id": cid, "name": name, "image": image, "kind": connector_kind(image),
-                      "state": state, "working_dir": wd, "creds": creds})
+                      "state": state, "working_dir": wd, "creds": creds, "extra_hosts": extra_hosts})
     return found
 
 

@@ -11,6 +11,10 @@ services:
 {% if skip_tls_verify %}
       SKIP_TLS_VERIFY: "true"
 {% endif %}
+{% if pangolin_ip %}
+    extra_hosts:
+      - "{{ pangolin_host }}:{{ pangolin_ip }}"
+{% endif %}
     cap_add:
       - NET_ADMIN
       - SYS_MODULE

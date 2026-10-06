@@ -104,3 +104,12 @@ def test_redacts_json_secret():
     assert "hunter2" not in out and '"newtId": "abc"' in out
     assert "hunter2" not in redact('["NEWT_ID=abc","NEWT_SECRET=hunter2"]')
     assert re.search(r"<redacted>", out)
+
+
+def test_extra_host_ip():
+    from charmer.phases.newt_ops import extra_host_ip
+    assert extra_host_ip(["p.example:10.0.0.5"], "p.example") == "10.0.0.5"
+    assert extra_host_ip(["other:1.2.3.4", "p.example=10.0.0.5"], "p.example") == "10.0.0.5"
+    assert extra_host_ip(["p.example:::1"], "p.example") == "::1"
+    assert extra_host_ip(["other:1.2.3.4"], "p.example") is None
+    assert extra_host_ip(None, "p.example") is None

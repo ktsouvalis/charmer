@@ -155,7 +155,7 @@ class NewtPhase(Phase):
             else:
                 newt_id, newt_secret = g[id_key], g[secret_key]
 
-            compose = self._render(agent_cfg, ctx.cfg.base_url, newt_id, newt_secret, skip_tls_verify)
+            compose = self._render(agent_cfg, ctx.cfg, newt_id, newt_secret, skip_tls_verify)
             conn.run(f"mkdir -p {NEWT_DIR}", sudo=True)
             changed = push_file(conn, compose, f"{NEWT_DIR}/docker-compose.yml", mode="0600")
             self._retire_adopted(ctx, agent_cfg.name, conn)
@@ -222,12 +222,14 @@ class NewtPhase(Phase):
         info["retired"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         ctx.state.save()
 
-    def _render(self, agent_cfg, pangolin_endpoint: str, newt_id: str, newt_secret: str,
-               skip_tls_verify: bool) -> str:
+    def _render(self, agent_cfg, cfg, newt_id: str, newt_secret: str, skip_tls_verify: bool) -> str:
+        # extra_hosts pins the same name PANGOLIN_ENDPOINT (and gerbil's
+        # base_endpoint) carry, so both the HTTPS and the WireGuard leg go private.
         return render("newt-compose.yml.j2", image_tag=agent_cfg.image_tag,
-                      pangolin_endpoint=pangolin_endpoint, newt_id=newt_id, newt_secret=newt_secret,
+                      pangolin_endpoint=cfg.base_url, newt_id=newt_id, newt_secret=newt_secret,
                       tun_device=agent_cfg.tun_device, docker_socket=agent_cfg.docker_socket,
-                      skip_tls_verify=skip_tls_verify)
+                      skip_tls_verify=skip_tls_verify, pangolin_host=cfg.dashboard_host,
+                      pangolin_ip=cfg.host_ip if agent_cfg.pangolin_via_host_ip else None)
 
     # ---------------------------------------------------------------- verify
     def verify(self, ctx: PhaseContext) -> bool:

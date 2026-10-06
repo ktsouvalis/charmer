@@ -36,7 +36,7 @@ from ..init_wizard import _ask, _ask_ssh, _ask_yn
 from ..sshexec import NodeConn, prompt_node_credentials
 from .base import Phase, PhaseContext, console
 from .newt_ops import (NEWT_DIR, check_credentials, connector_units, discover_connectors,
-                       image_tag, managed_newt_ids, newt_sites, unmanaged_sites,
+                       extra_host_ip, image_tag, managed_newt_ids, newt_sites, unmanaged_sites,
                        write_agents_to_config)
 
 DEFAULT_NEWT_TAG = "1.17.0"
@@ -149,10 +149,20 @@ class AdoptNewtPhase(Phase):
         endpoint_note = ""
         if creds["endpoint"] and creds["endpoint"].rstrip("/") != cfg.base_url:
             endpoint_note = f"; its endpoint {creds['endpoint']} becomes {cfg.base_url}"
+        # A hand-added extra_hosts pin for the dashboard name carries over as
+        # pangolin_via_host_ip only when it points at pangolin.host.ip.
+        pinned = extra_host_ip(found.get("extra_hosts"), cfg.tls.hostname) if cfg.tls.hostname else None
+        via_host_ip = pinned == cfg.host_ip
+        pin_note = ""
+        if via_host_ip:
+            pin_note = f"; it reaches {cfg.tls.hostname} at {pinned}, kept (pangolin_via_host_ip)"
+        elif pinned:
+            pin_note = (f"; it pins {cfg.tls.hostname} to {pinned}, not pangolin.host.ip "
+                        f"({cfg.host_ip}), so that pin is dropped")
         kind_note = " (a Pangolin CLI container: charmer runs fosrl/newt instead, same credentials)" \
             if found["kind"] == "cli" else ""
         console.print(f"  found {found['name']} ({found['image']}, {found['state']}), site {site!r}, "
-                      f"credentials accepted by this Pangolin{kind_note}{endpoint_note}")
+                      f"credentials accepted by this Pangolin{kind_note}{endpoint_note}{pin_note}")
 
         old_tag = image_tag(found["image"]) if found["kind"] == "newt" else None
         tag = _ask("  Newt image tag charmer will pin (not 'latest')",
@@ -166,6 +176,8 @@ class AdoptNewtPhase(Phase):
 
         agent = {"name": name, "ip": ip, "ssh": ssh_raw, "image_tag": tag,
                  "tun_device": "/dev/net/tun", "docker_socket": creds["docker_socket"]}
+        if via_host_ip:
+            agent["pangolin_via_host_ip"] = True
         try:
             new_cfg = write_agents_to_config(ctx.config_path, [agent])
         except ConfigError as exc:

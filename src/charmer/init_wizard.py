@@ -33,6 +33,7 @@ NEWT_AGENTS_EXAMPLE = """\
 #     image_tag: "1.17.0"          # pinned, never "latest" (config.py refuses it)
 #     tun_device: /dev/net/tun
 #     docker_socket: false         # true only if this agent needs Docker-label-based routing
+#     pangolin_via_host_ip: false  # true: newt reaches tls.hostname at pangolin.host.ip, not public DNS
 """
 
 
@@ -144,10 +145,15 @@ def run_wizard(output: str | None = None) -> Path:
         ip = _ask("  IP")
         agent_ssh = _ask_ssh(f"  {name}")
         image_tag = _ask("  Newt image tag (pinned, not 'latest')", "1.17.0")
-        agents.append({
+        agent = {
             "name": name, "ip": ip, "ssh": agent_ssh, "image_tag": image_tag,
             "tun_device": "/dev/net/tun", "docker_socket": False,
-        })
+        }
+        # Only meaningful when the dashboard has a DNS name to pin.
+        if hostname and _ask_yn(f"  Reach {hostname} at {host_ip} (pangolin.host.ip) instead of public DNS?",
+                                default=False):
+            agent["pangolin_via_host_ip"] = True
+        agents.append(agent)
 
     print("\n-- Admin/monitoring access (optional) --")
     monitor_ips_raw = _ask("IP(s)/CIDR(s) to scope ssh to on every host, comma-separated "

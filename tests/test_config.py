@@ -286,3 +286,29 @@ def test_absolute_state_file_is_kept(tmp_path):
     path.write_text(EXAMPLE.read_text().replace(
         "state_file: .state/pangolin-uop.json", "state_file: /var/lib/charmer/pangolin-uop.json"))
     assert load(path).state_file == Path("/var/lib/charmer/pangolin-uop.json")
+
+
+def test_newt_agent_pangolin_via_host_ip_defaults_off():
+    assert load(EXAMPLE).newt_agents[0].pangolin_via_host_ip is False
+
+
+def test_newt_agent_pangolin_via_host_ip(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace("    # pangolin_via_host_ip: true ", "    pangolin_via_host_ip: true "))
+    assert load(path).newt_agents[0].pangolin_via_host_ip is True
+
+
+def test_newt_agent_pangolin_via_host_ip_must_be_bool(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text().replace("    # pangolin_via_host_ip: true ", "    pangolin_via_host_ip: 10.0.0.5 "))
+    with pytest.raises(ConfigError, match="pangolin_via_host_ip must be true or false"):
+        load(path)
+
+
+def test_newt_agent_pangolin_via_host_ip_needs_tls_hostname(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text(EXAMPLE.read_text()
+                    .replace("    # pangolin_via_host_ip: true ", "    pangolin_via_host_ip: true ")
+                    .replace("hostname: pangolin.example.org", "hostname: ''"))
+    with pytest.raises(ConfigError, match="pangolin_via_host_ip needs tls.hostname"):
+        load(path)

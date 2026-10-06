@@ -194,6 +194,11 @@ lxc.cgroup2.devices.allow: c 10:200 rwm
 lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
 ```
 
+For an agent with `pangolin_via_host_ip`, preflight also checks that
+`pangolin.host.ip` is a private address and that the agent can open TCP
+443 on it. Both are warnings only, since 443 isn't listening until the
+`pangolin` phase has run.
+
 added to the container's `<id>.conf` on the **hypervisor**, or make it
 privileged / use a VM instead. Charmer has no SSH path to the hypervisor
 to fix this itself.
@@ -575,7 +580,10 @@ run's fleet. Nothing on the agent changes yet: `newt` then removes the old
 container (only that container, not the rest of its compose project) and
 starts charmer's `/opt/newt` bundle with the same credentials. The site and
 its resources stay exactly as they were, with no re-mint, and the endpoint
-becomes this site's `base_url`. The old compose file still defines the
+becomes this site's `base_url`. If the old container pinned the dashboard
+name to `pangolin.host.ip` in `extra_hosts`, the agent is written with
+`pangolin_via_host_ip: true`. A pin to any other address is reported and
+dropped. The old compose file still defines the
 container, so remove it there; charmer warns about this.
 
 Reported and skipped: a connector charmer can't read credentials from (a
@@ -605,6 +613,21 @@ pinned in state, never re-created or rotated by a re-run. If the Root API
 key / organization ID aren't pinned yet, the phase prints the one-time
 manual bootstrap (`/auth/initial-setup`, create an org, mint a Root API
 Key) before prompting for them.
+
+An agent with `pangolin_via_host_ip: true` gets an `extra_hosts` entry
+in its Compose bundle that resolves the dashboard name (`tls.hostname`,
+the host in `PANGOLIN_ENDPOINT`) to `pangolin.host.ip` inside the newt
+container. Gerbil advertises that same name as its WireGuard endpoint
+(`gerbil.base_endpoint`), so both the HTTPS control channel and the tunnel
+go over the private path. Use it when the agent can reach the Pangolin
+host privately and the public address is only reachable through NAT. At
+uop.gr, agents resolved the public IP, left through the campus gateway
+(source NAT) and came back in through a 1:1 NAT (hairpin). The NAT
+re-mapped the source port every ~2 minutes, which logged ~30 "Site N
+endpoint changed" per hour per site and aborted SSH sessions. With the
+private IP pinned there were 0 endpoint changes in 44h. It's off by
+default, refused without `tls.hostname` (the endpoint is then already
+`pangolin.host.ip`), and toggling it only recreates that agent's newt.
 
 Verify: each agent's `newt` container is in the `running` state.
 

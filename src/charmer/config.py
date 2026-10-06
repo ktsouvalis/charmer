@@ -82,6 +82,10 @@ class NewtAgent:
     image_tag: str = "latest"
     tun_device: str = "/dev/net/tun"
     docker_socket: bool = False
+    # Pin the dashboard domain to pangolin.host.ip inside this agent's newt
+    # container (compose `extra_hosts`), for agents that reach the Pangolin
+    # host privately while its public address is only reachable through NAT.
+    pangolin_via_host_ip: bool = False
 
 
 @dataclass
@@ -442,10 +446,22 @@ def load(path: str | Path) -> SiteConfig:
                 f"newt_agents[{i}] ({aname}): image_tag must be a pinned version, not "
                 "'latest' or empty; an unpinned Newt can outrun the server-side "
                 "Pangolin/Gerbil version and break compatibility silently")
+        via_host_ip = a.get("pangolin_via_host_ip")
+        if via_host_ip is None:
+            via_host_ip = False
+        if not isinstance(via_host_ip, bool):
+            problems.append(f"newt_agents[{i}] ({aname}): pangolin_via_host_ip must be true or false, "
+                            f"got {via_host_ip!r}")
+            via_host_ip = False
+        elif via_host_ip and not tls.hostname:
+            problems.append(
+                f"newt_agents[{i}] ({aname}): pangolin_via_host_ip needs tls.hostname: without it "
+                "the Pangolin endpoint is already pangolin.host.ip, there's no name to pin")
         agents.append(NewtAgent(
             name=aname, ip=aip, ssh=agent_ssh, image_tag=str(image_tag),
             tun_device=a.get("tun_device", "/dev/net/tun"),
             docker_socket=bool(a.get("docker_socket", False)),
+            pangolin_via_host_ip=via_host_ip,
         ))
 
     if agents and integration_api_enabled is False:

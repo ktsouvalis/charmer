@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.14.0] - 2026-10-06
+
+- **`newt_agents[].pangolin_via_host_ip`: reach Pangolin over the private
+  network.** When true, the agent's Compose bundle gets an `extra_hosts`
+  entry that resolves `tls.hostname` to `pangolin.host.ip` inside the newt
+  container. That covers both the HTTPS endpoint and gerbil's WireGuard
+  endpoint. Agents that went out to the public IP and back in through a
+  hairpinned 1:1 NAT had their source port re-mapped every ~2 minutes,
+  which broke the tunnel (~30 "Site N endpoint changed" per hour per site).
+  It's off by default, refused without `tls.hostname`, and `charm init`
+  asks for it per agent. Preflight warns when `pangolin.host.ip` isn't
+  private or isn't reachable on 443 from the agent. Adoption keeps an
+  existing `extra_hosts` pin to `pangolin.host.ip`. If you hand-added
+  `extra_hosts` to a charmer-managed `/opt/newt/docker-compose.yml`, set
+  the key before the next `provision`, which would otherwise overwrite it.
+
 ## [0.13.0] - 2026-09-30
 
 - **The command is now `charm`.** The executable (release zipapp asset,

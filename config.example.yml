@@ -114,6 +114,13 @@ newt_agents:
     image_tag: "1.17.0"            # pinned, never "latest" (config.py refuses it)
     tun_device: /dev/net/tun
     docker_socket: false           # true only if this agent needs Docker-label-based routing
+    # pangolin_via_host_ip: true   # optional, default false: inside this agent's newt
+    #                              # container, tls.hostname resolves to pangolin.host.ip
+    #                              # (compose extra_hosts) instead of public DNS. Use it when
+    #                              # the agent can reach the Pangolin host privately and the
+    #                              # public path goes through NAT: a hairpinned 1:1 NAT that
+    #                              # re-maps the source port breaks the WireGuard tunnel
+    #                              # ("Site N endpoint changed"). Needs tls.hostname set.
 
 # Newt credentials (a Pangolin "site" + its newtId/secret) are minted
 # automatically via the integration API the first time the newt phase runs

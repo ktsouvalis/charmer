@@ -5,6 +5,8 @@ including production, where it should refuse on existing artifacts.
 
 from __future__ import annotations
 
+import ipaddress
+
 from ..config import REQUIRED_FREE_TCP_PORTS, REQUIRED_FREE_UDP_PORTS
 from ..hostchecks import (DOCKER_DAEMON_JSON_PROBE, DOCKER_TCP_PORTS, DOCKERD_CMDLINE_PROBE,
                           SSH_SOCKET_CONFLICT_FIX, docker_tcp_findings, ssh_socket_conflict)
@@ -61,6 +63,9 @@ class PreflightPhase(Phase):
             lines.append(f"for each of {len(cfg.newt_agents)} Newt agent(s): SSH reachability + sudo, "
                          "OS release (warn unless Ubuntu/Debian), Docker presence, and a REAL TUN "
                          "capability test (create + delete a probe WireGuard-capable tun interface as root, not just checking the device file exists)")
+            if any(a.pangolin_via_host_ip for a in cfg.newt_agents):
+                lines.append(f"for agents with pangolin_via_host_ip: {cfg.host_ip} is a private address "
+                             "and reachable on 443 from the agent (warn only)")
         return lines
 
     def apply(self, ctx: PhaseContext) -> None:
@@ -204,7 +209,26 @@ class PreflightPhase(Phase):
         else:
             ctx.record(node, "TUN device capability", False, f"{r.err or r.out}; {TUN_LXC_HINT}")
 
+        agent_cfg = next((a for a in ctx.cfg.newt_agents if a.name == node), None)
+        if agent_cfg and agent_cfg.pangolin_via_host_ip:
+            self._check_host_ip_route(ctx, conn)
+
         self._check_hazards(ctx, conn)
+
+    def _check_host_ip_route(self, ctx: PhaseContext, conn) -> None:
+        """pangolin_via_host_ip pins tls.hostname to pangolin.host.ip inside
+        newt, so that address has to be the private one and reachable from
+        here. Warnings only: 443 isn't listening yet before `pangolin`."""
+        node, host_ip = conn.name, ctx.cfg.host_ip
+        private = ipaddress.ip_address(host_ip).is_private
+        ctx.record(node, "pangolin.host.ip is private", private,
+                   "" if private else f"{host_ip} is public: pangolin_via_host_ip would still take "
+                                      "the public path", warn=not private)
+        r = conn.run(f"timeout 5 bash -c '</dev/tcp/{host_ip}/443'")
+        ctx.record(node, f"reaches {host_ip}:443", r.ok,
+                   "" if r.ok else f"{r.err or 'no connection'}; expected before the pangolin phase "
+                                   "has run, otherwise newt can't reach Pangolin at this address",
+                   warn=not r.ok)
 
     def _check_hazards(self, ctx: PhaseContext, conn) -> None:
         """Read-only hazard checks run on every host alike (see hostchecks.py
