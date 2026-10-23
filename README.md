@@ -517,6 +517,21 @@ the backup. Clients only get the wider route after they reconnect, and
 anything real on your network inside the new range becomes unreachable for
 connected clients (it's CGNAT space, so unlikely, but check).
 
+**Exit node capacity after a multi-exit-node restore.** Every Newt site
+and every client that tunnels through an exit node takes a
+`gerbil.site_block_size` block (a `/30`, Pangolin's default, which charmer
+doesn't override) out of that exit node's `exitNodes.address`, and
+Gerbil's own address takes the first block. A `/24` holds 63 tunnels, a
+`/20` holds 1023. A charmer host runs one Gerbil, so after loading a dump
+from a deployment with several exit nodes, everything the others carried
+re-registers against this one. When the dump has more than one
+`exitNodes` row, `restore` counts the sites and clients that hold a block
+and warns if that's more than this host's exit node address has room for:
+the overflow would fail to connect with "No available subnets found for
+exit node". It's only a warning. Nothing is changed and the phase doesn't
+fail, because that address is Gerbil's WireGuard network, and widening it
+or pruning unused sites/clients is for you to decide.
+
 **Migrating an existing (non-charmer) Pangolin deployment onto a fresh
 charmer-provisioned host:** `server.secret` is what Pangolin uses to
 encrypt/sign data that ends up in Postgres (sessions, 2FA, stored resource

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.0] - 2026-10-23
+
+- **`restore` warns when a multi-exit-node dump won't fit on one exit
+  node.** Each site and client that tunnels through an exit node holds a
+  `/30` (`gerbil.site_block_size`) of that exit node's address, and a
+  charmer host has one Gerbil, so everything a dump's other exit nodes
+  carried re-registers here. When the dump has more than one `exitNodes`
+  row, sites + clients holding a block are compared against what this
+  host's exit node address can hold (e.g. 63 for a `/24`). Overflow is a
+  warning naming how many won't connect ("No available subnets found for
+  exit node"). Nothing is changed and the phase never fails on it.
+
 ## [0.14.0] - 2026-10-06
 
 - **`newt_agents[].pangolin_via_host_ip`: reach Pangolin over the private

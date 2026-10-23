@@ -1,4 +1,8 @@
-from charmer.phases.restore_phase import PANGOLIN_DEFAULT_GERBIL_SUBNET_GROUP, widen_utility_subnet
+from charmer.phases.restore_phase import (
+    PANGOLIN_DEFAULT_GERBIL_SUBNET_GROUP,
+    exit_node_capacity,
+    widen_utility_subnet,
+)
 
 ORG = ["100.90.128.0/24"]
 GERBIL = [PANGOLIN_DEFAULT_GERBIL_SUBNET_GROUP, "100.89.137.1/24"]
@@ -31,3 +35,14 @@ def test_refuses_overlap_with_gerbil_network():
 def test_unparseable_current_is_left_alone():
     new, reason = widen_utility_subnet("garbage", 20, ORG, GERBIL)
     assert new is None and "unparseable" in reason
+
+
+def test_exit_node_capacity_excludes_gerbils_own_block():
+    assert exit_node_capacity("100.89.137.1/24") == 63
+    assert exit_node_capacity("100.89.137.1/20", 30) == 1023
+    assert exit_node_capacity("100.89.137.1/30") == 0
+
+
+def test_exit_node_capacity_edge_cases():
+    assert exit_node_capacity("100.89.137.1/31") == 0
+    assert exit_node_capacity("garbage") is None

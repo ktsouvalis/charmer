@@ -30,6 +30,18 @@ overlaps neither any org's `subnet` nor Gerbil's network (config.yml's
 plus every `exitNodes.address`). Otherwise it's left alone with a warning.
 The just-loaded dump is the pre-change backup. Clients only pick up the
 wider route when they reconnect.
+
+A dump from a deployment with several exit nodes is also checked for
+whether this host's one Gerbil can hold every tunnel. Every Newt site and
+every client that registers through an exit node takes a
+`gerbil.site_block_size` block (a /30, since charmer doesn't set it) out of
+that exit node's `exitNodes.address`, and Gerbil's own address takes the
+first one (getUniqueSubnetForExitNode.ts). Once those exit nodes are gone,
+everything they carried re-registers against this one, so if the dump has
+more sites + clients holding a block than this exit node's address has
+room for, the overflow fails to connect ("No available subnets found for
+exit node"). That's a warning, never a change: the address is Gerbil's
+WireGuard network, and widening it isn't a restore's job.
 """
 
 from __future__ import annotations
@@ -51,6 +63,7 @@ DUMP_STAGING = "/tmp/charmer-restore.sql.gz"
 # config.yml never overrides (see pangolin-config.yml.j2).
 PANGOLIN_DEFAULT_UTILITY_PREFIX = 20
 PANGOLIN_DEFAULT_GERBIL_SUBNET_GROUP = "100.89.137.0/20"
+PANGOLIN_DEFAULT_SITE_BLOCK_SIZE = 30
 
 
 def widen_utility_subnet(current: str, prefix: int, org_subnets: list[str],
@@ -75,6 +88,20 @@ def widen_utility_subnet(current: str, prefix: int, org_subnets: list[str],
             if other.version == new.version and new.overlaps(other):
                 return None, f"widening {cur} to {new} would overlap {label} {other}, left alone"
     return str(new), f"{cur} -> {new}"
+
+
+def exit_node_capacity(address: str, block_size: int = PANGOLIN_DEFAULT_SITE_BLOCK_SIZE) -> int | None:
+    """How many sites + clients one exit node can tunnel: the number of
+    /`block_size` blocks in its `address` network, minus the one Gerbil's
+    own address sits in. None if `address` doesn't parse. Pure, so it's
+    unit-tested without a host."""
+    try:
+        net = ipaddress.ip_network(address, strict=False)
+    except ValueError:
+        return None
+    if net.prefixlen > block_size:
+        return 0
+    return 2 ** (block_size - net.prefixlen) - 1
 
 
 def _wait_stable(conn, service: str, ctx: PhaseContext, seconds: int = 5) -> bool:
@@ -120,6 +147,8 @@ class RestorePhase(Phase):
             "upload, sha256-verify, load with ON_ERROR_STOP, delete the dump from the host",
             "reconcile this host's gerbil identity (publicKey/reachableAt) back onto the restored exitNodes row",
         ]
+        lines.append("if the dump has more than one exit node, warn when its sites + clients outnumber "
+                     "what this host's exit node address can tunnel (nothing is changed)")
         target = ctx.cfg.restore_utility_subnet_prefix
         if target is None:
             lines.append(f"check every org's utilitySubnet and warn if narrower than Pangolin's "
@@ -206,6 +235,7 @@ class RestorePhase(Phase):
             raise RuntimeError("psql load failed: pangolin/gerbil/traefik intentionally left stopped; "
                                "fix the dump and --replay restore")
 
+        exit_id = None
         if pre_identity and len(pre_identity) == 3:
             exit_id, pubkey, reachable_at = pre_identity
             reconcile = (f'{psql} -c "update \\"exitNodes\\" set \\"publicKey\\"=\'{pubkey}\', '
@@ -217,6 +247,7 @@ class RestorePhase(Phase):
                 raise RuntimeError("failed to reconcile exitNodes identity after restore: "
                                    "gerbil will crash-loop on a foreign key; fix manually and --replay restore")
 
+        self._exit_node_headroom(ctx, conn, psql, exit_id)
         self._utility_subnets(ctx, conn, psql)
 
         ctx.begin(node, "restarting pangolin")
@@ -269,6 +300,43 @@ class RestorePhase(Phase):
         redial_all(ctx, "the restore recreated gerbil, so every Newt tunnel had to redial",
                    hint="The adopt_newt phase, next, asks for the host of each connector from the "
                         "old installation (IP/SSH) so charmer can take it over without re-minting.")
+
+    def _exit_node_headroom(self, ctx: PhaseContext, conn, psql: str, exit_id: str | None) -> None:
+        """Warn when a multi-exit-node dump has more tunneled sites + clients
+        than this host's exit node can hold; see the module docstring.
+        `exit_id` is this host's exitNodeId from before the load (None if
+        there was no row, then the lowest restored one is taken, same as
+        the reconcile's pick). Never fails the phase."""
+        node = conn.name
+        r = conn.run(f"{psql} -tA -F '|' -c " + shlex.quote(
+            'select "exitNodeId", "address" from "exitNodes" order by "exitNodeId"'))
+        if not r.ok:
+            ctx.record(node, "exit node capacity check", False, r.err or "query failed", warn=True)
+            return
+        rows = [line.split("|") for line in r.out.splitlines() if line.count("|") == 1]
+        if len(rows) <= 1:
+            return  # single-exit-node dump: what it already tunneled already fits
+        mine = next((row for row in rows if row[0] == exit_id), rows[0])
+        capacity = exit_node_capacity(mine[1])
+        n = conn.run(f"{psql} -tA -F '|' -c " + shlex.quote(
+            'select (select count(*) from sites where "exitNodeSubnet" is not null), '
+            '(select count(*) from clients where "exitNodeSubnet" is not null)'))
+        counts = n.out.strip().split("|") if n.ok else []
+        if capacity is None or len(counts) != 2 or not all(c.isdigit() for c in counts):
+            ctx.record(node, "exit node capacity check", False,
+                       n.err or f"couldn't read exit node {mine[0]} address {mine[1]!r} or tunnel counts",
+                       warn=True)
+            return
+        sites, clients = int(counts[0]), int(counts[1])
+        total = sites + clients
+        detail = (f"dump has {len(rows)} exit nodes; {sites} site(s) + {clients} client(s) hold a "
+                  f"/{PANGOLIN_DEFAULT_SITE_BLOCK_SIZE} tunnel block, this host's exit node "
+                  f"({mine[1]}) has room for {capacity}")
+        if total > capacity:
+            detail += (f"; once they all re-register here, {total - capacity} won't connect "
+                       "(\"No available subnets found for exit node\"), so widen this exit node's "
+                       "address or delete sites/clients that are no longer used")
+        ctx.record(node, "exit node capacity", total <= capacity, detail, warn=total > capacity)
 
     def _utility_subnets(self, ctx: PhaseContext, conn, psql: str) -> None:
         """Check (and, with restore.utility_subnet_prefix, widen) every
