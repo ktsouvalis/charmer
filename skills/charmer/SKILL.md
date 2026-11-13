@@ -11,7 +11,7 @@ layout) and turns any number of separate SSH hosts into Newt site agents. It
 runs from the operator's workstation; nothing is pre-installed on the targets.
 
 Upstream: https://github.com/ktsouvalis/charmer. The README of the installed
-version is the authority. This skill describes behaviour as of charmer 0.16.1;
+version is the authority. This skill describes behaviour as of charmer 0.16.2;
 if `charm --version` is newer, read `charm whats-new` before relying on
 details here.
 
@@ -21,9 +21,11 @@ This skill is organisation-agnostic. Never assume hostnames, IPs, domains,
 site names or paths. Before doing anything site-specific:
 
 1. Find the site config, `config.<site>.yml`. Look in the working directory,
-   then ask the operator. Its directory also holds `.state/<site>.json` and
-   transcript logs, because charmer resolves relative paths against the
-   config file's directory.
+   then ask the operator. Do not search the home directory or the rest of the
+   filesystem for it, and do not read notes or other files outside that
+   directory unless the operator points you to them. Its directory also holds
+   `.state/<site>.json` and transcript logs, because charmer resolves relative
+   paths against the config file's directory.
 2. Read it in full. Note `site.environment` (`lab` or `production`),
    `tls.provider`, `pangolin.database`, and the `newt_agents` list.
 3. Run `charm status config.<site>.yml` (local only, no SSH) to see which
@@ -31,6 +33,11 @@ site names or paths. Before doing anything site-specific:
    `charm` is not installed where you are, ask the operator to run it where
    it is and paste the output. Never read the state file instead.
 4. Check the version: `charm --version`, and `charm check-update`.
+
+The config, `charm status` and the hosts themselves are the current truth.
+Notes, handoff documents and old transcripts may be out of date: say where
+each fact came from, and when a note disagrees with the config or status,
+ask instead of choosing.
 
 If there is no config yet, the task is a new site. Start with `charm init`.
 
