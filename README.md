@@ -368,7 +368,7 @@ container on the compose bridge network, reachable from pangolin as
 `postgres:5432`, and also published as `127.0.0.1:5432` on the Pangolin
 host (`pangolin.postgres_loopback_port` changes the port, `null` drops the
 publish and restores the official never-published layout). That publish
-is for host-side tools that need a stable TCP port: dgu-services' SSH
+is for host-side tools that need a stable TCP port: an external tool's SSH
 tunnel (see "Newt credential automation"), or a GUI client over `ssh -L`.
 It's loopback-only by construction: there's no
 knob for a wider bind, `preflight` checks the port is free, and this
@@ -415,8 +415,8 @@ alone and only Gerbil/Traefik are retried.
 Also renders whatever the configured `tls.provider` needs on Traefik's
 side (see [Ingress](#ingress)) and turns on Pangolin's integration API
 (`flags.enable_integration_api`, loopback-only) by default, whether or not
-any Newt agents are configured, so external tooling such as dgu-services
-can use it (see "Newt credential automation" for
+any Newt agents are configured, so external tooling (for example, a tool
+that imports and manages resources) can use it (see "Newt credential automation" for
 `pangolin.integration_api.enabled` / `.port`).
 
 **Pangolin has no OIDC config.yml key.** Confirmed against
@@ -635,9 +635,9 @@ the host in `PANGOLIN_ENDPOINT`) to `pangolin.host.ip` inside the newt
 container. Gerbil advertises that same name as its WireGuard endpoint
 (`gerbil.base_endpoint`), so both the HTTPS control channel and the tunnel
 go over the private path. Use it when the agent can reach the Pangolin
-host privately and the public address is only reachable through NAT. At
-uop.gr, agents resolved the public IP, left through the campus gateway
-(source NAT) and came back in through a 1:1 NAT (hairpin). The NAT
+host privately and the public address is only reachable through NAT. In
+one real deployment, agents resolved the public IP, left through the
+campus gateway (source NAT) and came back in through a 1:1 NAT (hairpin). The NAT
 re-mapped the source port every ~2 minutes, which logged ~30 "Site N
 endpoint changed" per hour per site and aborted SSH sessions. With the
 private IP pinned there were 0 endpoint changes in 44h. It's off by
@@ -717,10 +717,9 @@ a dead `pangolin` backend produces) and fall back to a static "we'll be
 back" page served by `maintenance` instead, optionally with your own logo
 (`maintenance.logo` in the config, inlined as a data URI so the page needs
 no other assets, see `config.example.yml`). `charm init` asks for an
-organization name and defaults `maintenance.message` to a Greek line built
-from it (`{org}, θα επιστρέψουμε σε λίγο.`) instead of the English
-fallback in `config.py`; it's plain text in the generated config file, so
-edit it freely afterward.
+organization name and then for `maintenance.message`, in any language,
+defaulting to `{org} will be back shortly.`; it's plain text in the
+generated config file, so edit it freely afterward.
 
 **Re-running the `pangolin` phase on a live stack** (`--only pangolin`,
 `--replay`, a config change) keeps gerbil and traefik up whenever it can,
@@ -778,8 +777,8 @@ deliberately never exposed.
 The port and whether it's on at all are optional config knobs
 (`pangolin.integration_api.port`, default `3003`; `pangolin.integration_api.enabled`,
 default `true`). It's on regardless of whether any `newt_agents` are
-configured, because external tooling (dgu-services, which imports and
-normalizes private resources) uses it too. dgu-services reaches it, and
+configured, because external tooling (for example, a tool that imports and
+normalizes private resources) may use it too. Such a tool should reach it, and
 Postgres's `127.0.0.1:5432` publish, through an SSH local-forward to those
 loopback ports on the Pangolin host, never to container bridge IPs, which
 change whenever the containers are recreated. `enabled: false` turns it off,

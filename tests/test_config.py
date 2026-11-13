@@ -9,10 +9,10 @@ EXAMPLE = Path(__file__).parents[1] / "config.example.yml"
 
 def test_example_config_loads():
     cfg = load(EXAMPLE)
-    assert cfg.name == "pangolin-uop"
+    assert cfg.name == "pangolin-example"
     assert cfg.host_ip == "192.0.2.10"
     assert len(cfg.newt_agents) == 1
-    assert cfg.newt_agents[0].name == "patras-edge"
+    assert cfg.newt_agents[0].name == "edge-1"
 
 
 def test_missing_config_version_is_rejected(tmp_path):
@@ -35,7 +35,7 @@ def test_production_rejects_sqlite(tmp_path):
 
 def test_base_domain_is_required(tmp_path):
     path = tmp_path / "config.yml"
-    path.write_text(EXAMPLE.read_text().replace("base_domain: uop.gr", "base_domain: null"))
+    path.write_text(EXAMPLE.read_text().replace("base_domain: example.org", "base_domain: null"))
     with pytest.raises(ConfigError, match="pangolin.base_domain is required"):
         load(path)
 
@@ -170,7 +170,7 @@ def test_integration_api_defaults_to_on_and_3003():
 def test_integration_api_custom_port(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    port: 9000"))
+        "base_domain: example.org", "base_domain: example.org\n  integration_api:\n    port: 9000"))
     cfg = load(path)
     assert cfg.pangolin.integration_api_enabled is True
     assert cfg.pangolin.integration_api_port == 9000
@@ -179,7 +179,7 @@ def test_integration_api_custom_port(tmp_path):
 def test_integration_api_explicit_disable_conflicts_with_newt_agents(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    enabled: false"))
+        "base_domain: example.org", "base_domain: example.org\n  integration_api:\n    enabled: false"))
     with pytest.raises(ConfigError, match="integration_api.enabled is false"):
         load(path)
 
@@ -187,7 +187,7 @@ def test_integration_api_explicit_disable_conflicts_with_newt_agents(tmp_path):
 def test_integration_api_port_out_of_range_rejected(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    port: 70000"))
+        "base_domain: example.org", "base_domain: example.org\n  integration_api:\n    port: 70000"))
     with pytest.raises(ConfigError, match="port must be 1-65535"):
         load(path)
 
@@ -195,7 +195,7 @@ def test_integration_api_port_out_of_range_rejected(tmp_path):
 def test_integration_api_port_collision_rejected(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "base_domain: uop.gr", "base_domain: uop.gr\n  integration_api:\n    port: 3001"))
+        "base_domain: example.org", "base_domain: example.org\n  integration_api:\n    port: 3001"))
     with pytest.raises(ConfigError, match="collides with a port charmer already publishes"):
         load(path)
 
@@ -207,7 +207,7 @@ def test_postgres_loopback_port_defaults_to_5432():
 def test_postgres_loopback_port_null_opts_out(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "base_domain: uop.gr", "base_domain: uop.gr\n  postgres_loopback_port: null"))
+        "base_domain: example.org", "base_domain: example.org\n  postgres_loopback_port: null"))
     assert load(path).pangolin.postgres_loopback_port is None
 
 
@@ -220,7 +220,7 @@ def test_postgres_loopback_port_unset_with_sqlite(tmp_path):
 def test_postgres_loopback_port_accepted(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "base_domain: uop.gr", "base_domain: uop.gr\n  postgres_loopback_port: 15432"))
+        "base_domain: example.org", "base_domain: example.org\n  postgres_loopback_port: 15432"))
     assert load(path).pangolin.postgres_loopback_port == 15432
 
 
@@ -233,7 +233,7 @@ def test_postgres_loopback_port_accepted(tmp_path):
 def test_postgres_loopback_port_rejected(tmp_path, value, match):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "base_domain: uop.gr", f"base_domain: uop.gr\n  postgres_loopback_port: {value}"))
+        "base_domain: example.org", f"base_domain: example.org\n  postgres_loopback_port: {value}"))
     with pytest.raises(ConfigError, match=match):
         load(path)
 
@@ -242,7 +242,7 @@ def test_postgres_loopback_port_requires_postgres(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
         "database: postgres", "database: sqlite").replace(
-        "base_domain: uop.gr", "base_domain: uop.gr\n  postgres_loopback_port: 5432"))
+        "base_domain: example.org", "base_domain: example.org\n  postgres_loopback_port: 5432"))
     with pytest.raises(ConfigError, match="database is not postgres"):
         load(path)
 
@@ -277,15 +277,15 @@ def test_local_paths_resolve_against_config_dir_not_cwd(tmp_path, monkeypatch):
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
     cfg = load(Path("../site/config.yml"))
-    assert cfg.state_file == site / ".state" / "pangolin-uop.json"
+    assert cfg.state_file == site / ".state" / "pangolin-example.json"
     assert cfg.restore_dump == str(site / "backups" / "pangolin.sql.gz")
 
 
 def test_absolute_state_file_is_kept(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text().replace(
-        "state_file: .state/pangolin-uop.json", "state_file: /var/lib/charmer/pangolin-uop.json"))
-    assert load(path).state_file == Path("/var/lib/charmer/pangolin-uop.json")
+        "state_file: .state/pangolin-example.json", "state_file: /var/lib/charmer/pangolin-example.json"))
+    assert load(path).state_file == Path("/var/lib/charmer/pangolin-example.json")
 
 
 def test_newt_agent_pangolin_via_host_ip_defaults_off():

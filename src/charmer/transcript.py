@@ -60,7 +60,7 @@ def redact(text: str) -> str:
 class Transcript:
     """One append-only file per `provision`/`clean`/`shutdown`/`start` run.
 
-    Flat and chronological (not one file per host); grep for `[patras-edge]`
+    Flat and chronological (not one file per host); grep for `[edge-1]`
     to filter by host, or `(newt)` to filter by phase.
     """
 

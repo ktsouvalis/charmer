@@ -73,8 +73,8 @@ def test_write_agents_to_example_config(tmp_path):
     path = tmp_path / "config.yml"
     path.write_text(EXAMPLE.read_text())
     cfg = write_agents_to_config(path, [AGENT])
-    assert [a.name for a in cfg.newt_agents] == ["patras-edge", "old-edge"]
-    assert [a.name for a in load(path).newt_agents] == ["patras-edge", "old-edge"]
+    assert [a.name for a in cfg.newt_agents] == ["edge-1", "old-edge"]
+    assert [a.name for a in load(path).newt_agents] == ["edge-1", "old-edge"]
 
 
 def test_write_agents_rolls_back_an_invalid_result(tmp_path):
@@ -82,7 +82,7 @@ def test_write_agents_rolls_back_an_invalid_result(tmp_path):
     original = EXAMPLE.read_text()
     path.write_text(original)
     with pytest.raises(ConfigError):
-        write_agents_to_config(path, [dict(AGENT, name="patras-edge")])  # duplicate name
+        write_agents_to_config(path, [dict(AGENT, name="edge-1")])  # duplicate name
     assert path.read_text() == original
 
 

@@ -22,7 +22,7 @@ NEWT_AGENTS_EXAMPLE = """\
 # is a fully separate SSH target, never assumed to be a VM, LXC container,
 # or physical host. Example:
 # newt_agents:
-#   - name: patras-edge
+#   - name: edge-1
 #     ip: 192.0.2.20
 #     ssh:
 #       user: root
@@ -120,8 +120,9 @@ def run_wizard(output: str | None = None) -> Path:
 
     print("\n-- Maintenance page ('we'll be back', shown on the dashboard host during `charm shutdown`) --")
     org_name = _ask("Organization name (Enter to skip)")
-    maintenance_message = (f"{org_name}, θα επιστρέψουμε σε λίγο." if org_name
-                           else "Θα επιστρέψουμε σε λίγο.")
+    default_message = (f"{org_name} will be back shortly." if org_name
+                       else "We'll be back shortly.")
+    maintenance_message = _ask("Maintenance message (any language)", default_message)
 
     print("\n-- SMTP (optional: password reset / invite emails; Enter to skip) --")
     smtp_enabled = _ask_yn("Configure SMTP", default=False)

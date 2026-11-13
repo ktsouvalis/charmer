@@ -108,7 +108,7 @@ class PangolinConfig:
     # Pangolin's integration API (config.yml's `flags.enable_integration_api`
     # / `server.integration_port`, see pangolin_api.py). On by default, port
     # 3003, whether or not newt_agents are configured: the newt phase mints
-    # credentials through it, and external tooling (e.g. dgu-services) uses
+    # credentials through it, and external tooling (e.g. a resource importer) uses
     # it too. integration_api.enabled: false turns it off (refused when
     # newt_agents are configured); integration_api.port overrides 3003.
     # Always published loopback-only
@@ -120,7 +120,7 @@ class PangolinConfig:
     integration_api_port: int = 3003
     # Loopback-only host publish of the postgres container
     # (`127.0.0.1:<port>:5432`), for host-side tooling that can't just
-    # `docker exec postgres psql` (e.g. dgu-services' SSH tunnel, a GUI
+    # `docker exec postgres psql` (e.g. a tool's SSH tunnel, a GUI
     # client over `ssh -L`). Defaults to 5432 with `database: postgres`;
     # an explicit null keeps the official layout's never-published postgres.
     # Never anything but 127.0.0.1: charmer has no knob for a wildcard publish.
