@@ -1,7 +1,7 @@
 {
   "name": "charmer",
   "description": "Skill for operating charmer: provision and run a self-hosted Pangolin CE node and Newt agents over SSH.",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "author": { "name": "Konstantinos Tsouvalis" },
   "homepage": "https://github.com/ktsouvalis/charmer",
   "repository": "https://github.com/ktsouvalis/charmer",

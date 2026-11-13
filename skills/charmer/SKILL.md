@@ -11,7 +11,7 @@ layout) and turns any number of separate SSH hosts into Newt site agents. It
 runs from the operator's workstation; nothing is pre-installed on the targets.
 
 Upstream: https://github.com/ktsouvalis/charmer. The README of the installed
-version is the authority. This skill describes behaviour as of charmer 0.16.0;
+version is the authority. This skill describes behaviour as of charmer 0.16.1;
 if `charm --version` is newer, read `charm whats-new` before relying on
 details here.
 
@@ -27,7 +27,9 @@ site names or paths. Before doing anything site-specific:
 2. Read it in full. Note `site.environment` (`lab` or `production`),
    `tls.provider`, `pangolin.database`, and the `newt_agents` list.
 3. Run `charm status config.<site>.yml` (local only, no SSH) to see which
-   phases are done, failed or pending, and which secrets are pinned.
+   phases are done, failed or pending, and which secrets are pinned. If
+   `charm` is not installed where you are, ask the operator to run it where
+   it is and paste the output. Never read the state file instead.
 4. Check the version: `charm --version`, and `charm check-update`.
 
 If there is no config yet, the task is a new site. Start with `charm init`.
@@ -64,8 +66,12 @@ See `references/phases.md` for what each phase does and its gotchas.
   around it.
 - **Treat the state file as a secret store.** `.state/<site>.json` holds
   plaintext secrets (Pangolin server secret, Postgres password, Root API key,
-  Newt credentials, SMTP password). Never print, paste, commit or upload it.
-  Use `charm status` to inspect it; it shows secret names only.
+  Newt credentials, SMTP password). Never open it: no Read, `cat`, `grep`,
+  `jq` or parsing, not even to see its keys or phase statuses, because reading
+  it puts every secret into the conversation. Never print, paste, commit or
+  upload it either. Use `charm status` to inspect it; it shows secret names
+  only. If the state file is in your working directory, say so (it should be
+  0600 and kept off shared or synced folders) and leave it unread.
 - **Pinned values are set once.** The server secret, DB password, Root API
   key and minted Newt credentials are generated or asked for once and reused
   forever. A replay never rotates them. If the operator is migrating from

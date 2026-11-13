@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.1] - 2026-11-13
+
+- **Agent skill: never open the state file.** The skill said never to
+  *print* `.state/<site>.json`; an agent could still read it "only for its
+  keys", which puts every secret into the conversation. It now forbids any
+  read of the state file and asks the operator to paste `charm status`
+  output when `charm` is not installed. No change to `charm` itself.
+
 ## [0.16.0] - 2026-11-13
 
 - **Agent skill.** `skills/charmer/` (with `.claude-plugin/plugin.json`)
