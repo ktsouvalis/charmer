@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+- **Agent skill.** `skills/charmer/` (with `.claude-plugin/plugin.json`)
+  teaches an AI agent to operate charmer safely: read the site's own
+  config and `charm status` first, preflight before any apply, never
+  answer confirmation prompts for the operator, keep the state file
+  secret. Installs as a Claude Code plugin or copies into any agent that
+  reads `SKILL.md` skills.
+- **Neutral examples.** `config.example.yml`, tests and docs use
+  `pangolin-example`, `example.org` and `edge-1` instead of one
+  organisation's names.
+- **`charm init` asks for the maintenance message.** It still asks for an
+  organization name first, then for the message in any language, defaulting
+  to `<organization> will be back shortly.` It no longer writes a fixed
+  Greek line.
+
 ## [0.15.0] - 2026-10-23
 
 - **`restore` warns when a multi-exit-node dump won't fit on one exit
