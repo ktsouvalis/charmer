@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.16.0] - 2026-11-13
 
 - **Agent skill.** `skills/charmer/` (with `.claude-plugin/plugin.json`)
   teaches an AI agent to operate charmer safely: read the site's own

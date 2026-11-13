@@ -11,7 +11,7 @@ layout) and turns any number of separate SSH hosts into Newt site agents. It
 runs from the operator's workstation; nothing is pre-installed on the targets.
 
 Upstream: https://github.com/ktsouvalis/charmer. The README of the installed
-version is the authority. This skill describes behaviour as of charmer 0.15.0;
+version is the authority. This skill describes behaviour as of charmer 0.16.0;
 if `charm --version` is newer, read `charm whats-new` before relying on
 details here.
 
