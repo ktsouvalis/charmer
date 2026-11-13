@@ -81,6 +81,14 @@ git clone https://github.com/ktsouvalis/charmer.git && cd charmer
 python3 -m venv .venv && .venv/bin/pip install -e .
 ```
 
+### Agent skill (optional)
+
+An agent skill for Claude Code ships in [`skills/charmer/`](skills/charmer/SKILL.md). It reads your own config and `charm status` first, runs preflight before any apply, never answers confirmation prompts for you and never prints the state file. Install it from the [ktsouvalis/skills](https://github.com/ktsouvalis/skills) marketplace:
+
+```
+/plugin install charmer --marketplace ktsouvalis/skills
+```
+
 ## Quickstart
 
 ```bash
