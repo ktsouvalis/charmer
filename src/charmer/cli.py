@@ -8,6 +8,8 @@ Newt agents over SSH.
     charm start config.yml             start them again (refuses without a prior shutdown)
     charm clean config.yml             tear the site down to a bare host
     charm status config.yml            phase progress + pinned state, local only (no SSH)
+    charm state encrypt config.yml     encrypt an old plaintext state file
+    charm state set config.yml KEY     re-pin one value (hidden prompt)
     charm monitor config.<site>.monitor.yml     real-time health dashboard
     charm logs config.<site>.monitor.yml        cluster-wide log viewer (SSH), --save to download
     charm update                       install the latest release (zipapp binary only)
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import sys
 import time
 from pathlib import Path
@@ -39,7 +42,7 @@ from .phases.base_setup import BasePhase
 from .phases.preflight import PreflightPhase
 from .phases.restore_phase import RestorePhase
 from .sshexec import Fleet, NodeConn
-from .state import State
+from .state import State, passphrase_source
 from .update import check_for_update, check_update_now, self_update
 
 PIPELINE = [
@@ -113,22 +116,35 @@ def _load_or_die(config_path: str) -> SiteConfig:
         raise SystemExit(2)
 
 
-def _state_or_die(cfg: SiteConfig) -> State:
+PASSPHRASE_HELP = ("read the state passphrase from FILE (default: the "
+                   "CHARM_STATE_PASSPHRASE env var, else a prompt)")
+
+
+def _state_or_die(cfg: SiteConfig, unlock: bool = False,
+                  passphrase_file: str | None = None) -> State:
+    """Load the site state. With `unlock`, also decrypt its pinned values
+    (asks for the passphrase, or a new one on a site with nothing encrypted
+    yet); without it, `generated` stays locked and only phases are usable."""
     try:
-        return State(cfg.state_file, cfg.name)
-    except RuntimeError as exc:
+        state = State(cfg.state_file, cfg.name, passphrase_source(passphrase_file, cfg.name))
+        if unlock:
+            state.unlock()
+        return state
+    except (RuntimeError, OSError) as exc:
         console.print(f"[red]state problem:[/red] {exc}")
         raise SystemExit(2)
 
 
-def _connected_command(config_path: str, command: str):
+def _connected_command(config_path: str, command: str, unlock: bool = False,
+                       passphrase_file: str | None = None):
     """Shared setup for provision/shutdown/start: load config, open a
     transcript, build the fleet, pre-authenticate. Returns (cfg, state,
-    fleet, transcript) or raises SystemExit(2) on failure."""
+    fleet, transcript) or raises SystemExit(2) on failure. Only provision
+    needs the pinned values (`unlock`); shutdown/start touch phases only."""
     from .transcript import Transcript
 
     cfg = _load_or_die(config_path)
-    state = _state_or_die(cfg)
+    state = _state_or_die(cfg, unlock, passphrase_file)
     transcript = Transcript(_transcript_path(cfg, command))
     console.print(f"[dim]transcript: {transcript.path} (every command run on every host this "
                  "session, mode 0600)[/dim]")
@@ -155,7 +171,8 @@ def cmd_provision(args: argparse.Namespace) -> int:
             console.print(f"[red]unknown phase(s) for {flag}: {', '.join(sorted(missing))}[/red]")
             return 2
 
-    cfg, state, fleet, transcript = _connected_command(args.config, "provision")
+    cfg, state, fleet, transcript = _connected_command(
+        args.config, "provision", unlock=True, passphrase_file=args.passphrase_file)
     ctx = PhaseContext(cfg=cfg, state=state, fleet=fleet, config_path=Path(args.config))
     if args.replay:
         for name in args.replay:
@@ -247,8 +264,11 @@ def cmd_status(args: argparse.Namespace) -> int:
     """Local-only: no SSH, no fleet, just config + the state file on disk.
     Answers "where is this site in the pipeline" without touching the network."""
     cfg = _load_or_die(args.config)
-    state = _state_or_die(cfg)
-    generated = state.data.get("generated", {})
+    state = _state_or_die(cfg, unlock=args.unlock and cfg.state_file.exists(),
+                          passphrase_file=args.passphrase_file)
+    # locked: names only (membership checks below still work), no values
+    generated = (dict.fromkeys(state.generated_keys(), None) if state.locked
+                 else state.data["generated"])
 
     console.print(f"[bold]{cfg.name}[/bold] ({cfg.environment}) - {cfg.dashboard_host} @ {cfg.host_ip}")
     hostname = cfg.host_hostname or generated.get("host_hostname", "")
@@ -256,6 +276,12 @@ def cmd_status(args: argparse.Namespace) -> int:
         console.print(f"[dim]OS hostname: {hostname}[/dim]")
     exists = cfg.state_file.exists()
     console.print(f"[dim]state file: {cfg.state_file}{'' if exists else ' (not created yet, nothing applied)'}[/dim]")
+    if state.plaintext_on_disk:
+        console.print("[yellow]pinned secrets are in plain text: run "
+                      f"`charm state encrypt {args.config}`[/yellow]")
+    elif state.locked:
+        console.print("[dim]pinned values encrypted; restore time, cert expiry and "
+                      "hostname from state show with --unlock[/dim]")
 
     console.print("\n[bold]phases:[/bold]")
     for phase in PIPELINE:
@@ -277,6 +303,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     have = [label for label, key in pinned if key in generated]
     if have:
         console.print(f"\n[bold]pinned in state[/bold] (values not shown): {', '.join(have)}")
+        console.print(f"  [dim]names for `charm state get/set`: {', '.join(sorted(generated))}[/dim]")
 
     if cfg.newt_agents:
         console.print(f"\n[bold]newt agents[/bold] ({len(cfg.newt_agents)} configured):")
@@ -294,12 +321,55 @@ def cmd_status(args: argparse.Namespace) -> int:
         console.print(f"\n[bold]restore.postgres_dump:[/bold] {cfg.restore_dump}{flag}")
         last = generated.get("restore_at")
         if last:
-            console.print(f"  [dim]last loaded: {last} (sha256 {generated.get('restore_sha256', '?')[:12]}...)[/dim]")
+            console.print(f"  [dim]last loaded: {last} (sha256 {(generated.get('restore_sha256') or '?')[:12]}...)[/dim]")
 
     cert_expiry = generated.get("tls_cert_expiry")
     console.print(f"\n[bold]tls:[/bold] provider={cfg.tls.provider}" +
                  (f", cert expiry {cert_expiry}" if cert_expiry else ""))
 
+    return 0
+
+
+def cmd_state(args: argparse.Namespace) -> int:
+    """encrypt / passwd / set / get on the pinned values of one site."""
+    cfg = _load_or_die(args.config)
+    if not cfg.state_file.exists():
+        console.print(f"[red]no state file at {cfg.state_file}[/red]")
+        return 2
+    state = _state_or_die(cfg, unlock=True, passphrase_file=args.passphrase_file)
+    gen = state.data["generated"]
+
+    if args.action == "encrypt":
+        state.save()
+        console.print(f"[green]{cfg.state_file}: {len(gen)} pinned value(s) encrypted.[/green] "
+                      "Delete or encrypt any plain copies (.bak, .cleaned-*), and "
+                      "remember older copies stay in backups until they expire.")
+        return 0
+    if args.action == "passwd":
+        state.change_passphrase()
+        console.print("[green]passphrase changed.[/green]")
+        return 0
+
+    if args.key not in gen:
+        console.print(f"[red]no pinned value {args.key!r}.[/red] Pinned: " + ", ".join(sorted(gen)))
+        return 2
+    if args.action == "get":
+        value = gen[args.key]
+        print(value if isinstance(value, str) else json.dumps(value))
+        return 0
+    # set
+    if not isinstance(gen[args.key], str):
+        console.print(f"[red]{args.key} is not a plain string value; refusing to "
+                      "overwrite it from a prompt.[/red]")
+        return 2
+    value = getpass.getpass(f"new value for {args.key}: ")
+    if not value or getpass.getpass("repeat it: ") != value:
+        console.print("[yellow]empty or not matching, nothing changed.[/yellow]")
+        return 1
+    gen[args.key] = value
+    state.save()
+    console.print(f"[green]{args.key} re-pinned.[/green] Replay the phase that renders it "
+                  "(e.g. `--replay pangolin`) to apply it on the host.")
     return 0
 
 
@@ -359,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prov.add_argument("config", help="path to config.<site>.yml")
     p_prov.add_argument("--only", nargs="+", metavar="PHASE", help="run only the named phase(s)")
     p_prov.add_argument("--replay", nargs="+", metavar="PHASE", help="re-run specific completed phase(s)")
+    p_prov.add_argument("--passphrase-file", metavar="FILE", help=PASSPHRASE_HELP)
     p_prov.set_defaults(func=cmd_provision)
 
     p_shutdown = sub.add_parser("shutdown", help="stop pangolin (postgres, newt agents, gerbil, traefik, "
@@ -378,7 +449,18 @@ def main(argv: list[str] | None = None) -> int:
 
     p_status = sub.add_parser("status", help="show phase progress + pinned state for a config file (local only, no SSH)")
     p_status.add_argument("config")
+    p_status.add_argument("--unlock", action="store_true",
+                          help="decrypt the state to show restore time, cert expiry and hostname")
+    p_status.add_argument("--passphrase-file", metavar="FILE", help=PASSPHRASE_HELP)
     p_status.set_defaults(func=cmd_status)
+
+    p_state = sub.add_parser("state", help="manage the encrypted pinned values of a site: encrypt "
+                             "an old plaintext file, change the passphrase, re-pin or show one value")
+    p_state.add_argument("action", choices=["encrypt", "passwd", "set", "get"])
+    p_state.add_argument("config")
+    p_state.add_argument("key", nargs="?", help="pinned value name (set / get)")
+    p_state.add_argument("--passphrase-file", metavar="FILE", help=PASSPHRASE_HELP)
+    p_state.set_defaults(func=cmd_state)
 
     p_mon = sub.add_parser("monitor", help="real-time health dashboard")
     p_mon.add_argument("config", help="config.<site>.monitor.yml (emitted by provision's handoff phase)")
@@ -416,6 +498,8 @@ def main(argv: list[str] | None = None) -> int:
     p_whats_new.set_defaults(func=cmd_whats_new)
 
     args = parser.parse_args(argv)
+    if args.command == "state" and args.action in ("set", "get") and not args.key:
+        parser.error(f"state {args.action} needs a KEY (see `charm status` for the names)")
 
     if args.command not in ("update", "check-update"):
         try:

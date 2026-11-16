@@ -120,6 +120,8 @@ charm init [-o FILE]                interactive wizard, writes config.<site>.yml
 charm provision CONFIG              run the phase pipeline (resumable)
   --only PHASE [PHASE...]              run only the named phase(s)
   --replay PHASE [PHASE...]            re-run specific completed phase(s)
+  --passphrase-file FILE               state passphrase from FILE (default: the
+                                        CHARM_STATE_PASSPHRASE env var, else a prompt)
 
 charm shutdown CONFIG               stop pangolin (postgres, newt agents, gerbil,
                                        traefik, and the maintenance page left
@@ -133,6 +135,13 @@ charm clean CONFIG                  tear the site down to a bare host (typed-nam
 
 charm status CONFIG                 phase progress + pinned state for a config file,
                                        local only (reads config + state file, no SSH)
+  --unlock                             decrypt the state to also show restore time,
+                                        cert expiry and hostname (asks the passphrase)
+
+charm state {encrypt,passwd} CONFIG encrypt an old plaintext state file / change
+                                       the state passphrase
+charm state {get,set} CONFIG KEY    show one pinned value / re-pin it from a hidden
+                                       prompt (names: `charm status`)
 
 charm monitor CONFIG.monitor.yml    real-time health dashboard
 charm logs CONFIG.monitor.yml       cluster-wide log viewer (SSH)
@@ -892,10 +901,28 @@ re-render can never rotate a password out from under a running stack.
   safe to commit: it's git-ignored by default anyway, except
   `config.example.yml`.
 - SSH/sudo passwords, when used, are prompted at runtime and never stored.
-- Generated secrets currently live **in plaintext** inside the state file.
-  Acceptable for lab work; flagged as a hard requirement to fix (age/sops
-  encryption or the OS keyring) before production use. `.state/` is
-  git-ignored; keep it that way.
+- Pinned values are **encrypted** in the state file (since 0.17.0): scrypt
+  derives a key from a passphrase, AES-256-GCM seals the whole `generated`
+  map. Only the site, the phase statuses, adopted-agent metadata and the
+  *names* of the pinned values stay readable, so `charm status`, `shutdown`,
+  `start` and `clean` need no passphrase. Nothing on disk can decrypt the
+  file, so a copy of the working directory (a VM backup, a `clean` archive)
+  gives away no secret. The blob is bound to its tool and site name: pasted
+  into another site's file it fails to decrypt.
+- The passphrase comes from `CHARM_STATE_PASSPHRASE`, else
+  `--passphrase-file FILE`, else a prompt. The first `provision` of a new site
+  (or the first save of an old plaintext file) asks you to choose one, twice.
+  Keep it in your password manager: a lost passphrase means re-pinning every
+  secret by hand (including the old `server.secret`) or rebuilding the site.
+- Old plaintext state files (0.16.x and earlier) still load. `charm status`
+  flags them; `charm state encrypt CONFIG` (or the next `provision`) rewrites
+  them encrypted. Delete any plain copies yourself (`.bak`, older
+  `.cleaned-*` archives), and remember older backups keep the plaintext until
+  they expire.
+- To change one pinned value (e.g. the SMTP password rotated upstream):
+  `charm state set CONFIG KEY`, then `--replay` the phase that renders it.
+  Never hand-edit the file.
+- `.state/` is git-ignored; keep it that way.
 - Every command run on every host during `provision`/`clean`/`shutdown`/
   `start` is logged to a `0600` transcript file next to the state file,
   with best-effort secret redaction (see `transcript.py`'s docstring for
